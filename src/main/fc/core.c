@@ -20,6 +20,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -500,6 +501,11 @@ void disarm(flightLogDisarmReason_e reason)
         DISABLE_ARMING_FLAG(ARMED); // disarm now
         lastDisarmTimeUs = micros();
 
+#ifdef SIMULATOR_BUILD
+        printf("[SITL] DISARMED reason=%d armingFlags=0x%08x millis=%u\n",
+               reason, getArmingDisableFlags(), millis());
+#endif
+
 #ifdef USE_OSD
         if (IS_RC_MODE_ACTIVE(BOXCRASHFLIP) || isLaunchControlActive()) {
             osdSuppressStats(true);
@@ -608,6 +614,10 @@ if (isMotorProtocolDshot()) {
         mixerResetRpmLimiter();
 #endif
         ENABLE_ARMING_FLAG(ARMED);  // ***ARM NOW ***
+
+#ifdef SIMULATOR_BUILD
+        printf("[SITL] ARMED millis=%u\n", millis());
+#endif
 
 #ifdef USE_RC_STATS
         NotifyRcStatsArming();
