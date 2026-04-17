@@ -256,7 +256,17 @@ static void updateState(const fdm_packet* pkt)
 //        simRate = simRate * 0.5 + (1e6 * deltaSim / (realtime_now - last_realtime)) * 0.5;
         struct timespec out_ts;
         timeval_sub(&out_ts, &now_ts, &last_ts);
-        simRate = deltaSim / (out_ts.tv_sec + 1e-9*out_ts.tv_nsec);
+        double candidate = deltaSim / (out_ts.tv_sec + 1e-9*out_ts.tv_nsec);
+        // Clamp to prevent OS scheduling jitter from poisoning BF's internal clock.
+        // Without this, back-to-back UDP deliveries produce simRate >100x, which
+        // makes millis() jump by seconds and instantly trips the failsafe timer.
+        if (candidate > 10.0) candidate = 10.0;
+        if (candidate < 0.1) candidate = 0.1;
+        simRate = simRate * 0.5 + candidate * 0.5;  // low-pass filter
+        if (simRate > 2.0 || simRate < 0.3) {
+            printf("[SITL] simRate SPIKE: %.3f (candidate=%.3f deltaSim=%.6f wall=%.6f)\n",
+                   simRate, candidate, deltaSim, out_ts.tv_sec + 1e-9*out_ts.tv_nsec);
+        }
     }
 //    printf("simRate = %lf, millis64 = %lu, millis64_real = %lu, deltaSim = %lf\n", simRate, millis64(), millis64_real(), deltaSim*1e6);
 
