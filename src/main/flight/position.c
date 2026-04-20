@@ -26,6 +26,11 @@
 
 #include "platform.h"
 
+#ifdef SIMULATOR_BUILD
+#include <stdio.h>
+#include "drivers/time.h"
+#endif
+
 #include "build/debug.h"
 
 #include "common/maths.h"
@@ -193,7 +198,24 @@ void calculateEstimatedAltitude(void)
 
     // *** calculate Vario signal
     static float previousZeroedAltitudeCm = 0.0f;
+#ifdef SIMULATOR_BUILD
+    // In SITL the ALTITUDE task runs at ~40 Hz (starved by higher-priority
+    // tasks on the simRate-scaled clock), but the compile-time constant
+    // TASK_ALTITUDE_RATE_HZ is 100.  Use measured delta to avoid 2.5× vario
+    // inflation.  On real hardware the constant is correct and more stable.
+    static timeUs_t previousAltTaskTimeUs = 0;
+    timeUs_t nowUs = micros();
+    float actualRateHz;
+    if (previousAltTaskTimeUs > 0 && nowUs > previousAltTaskTimeUs) {
+        actualRateHz = 1e6f / (float)(nowUs - previousAltTaskTimeUs);
+    } else {
+        actualRateHz = (float)TASK_ALTITUDE_RATE_HZ;
+    }
+    previousAltTaskTimeUs = nowUs;
+    zeroedAltitudeDerivative = (zeroedAltitudeCm - previousZeroedAltitudeCm) * actualRateHz; // cm/s
+#else
     zeroedAltitudeDerivative = (zeroedAltitudeCm - previousZeroedAltitudeCm) * TASK_ALTITUDE_RATE_HZ; // cm/s
+#endif
     previousZeroedAltitudeCm = zeroedAltitudeCm;
 
     zeroedAltitudeDerivative = pt2FilterApply(&altitudeDerivativeLpf, zeroedAltitudeDerivative);
@@ -213,6 +235,31 @@ void calculateEstimatedAltitude(void)
     DEBUG_SET(DEBUG_AUTOPILOT_ALTITUDE, 2, lrintf(zeroedAltitudeCm));
 
     altitudeAvailable = haveGpsAlt || haveBaroAlt;
+
+#ifdef SIMULATOR_BUILD
+    {
+        static uint32_t last_print_ms = 0;
+        static uint32_t last_call_us = 0;
+        static uint32_t dt_sum_us = 0;
+        static uint32_t dt_count = 0;
+        uint32_t now_us = micros();
+        if (last_call_us > 0) {
+            dt_sum_us += (now_us - last_call_us);
+            dt_count++;
+        }
+        last_call_us = now_us;
+        uint32_t now_ms = millis();
+        if (now_ms - last_print_ms >= 2000 && dt_count > 0) {
+            float avg_dt_us = (float)dt_sum_us / dt_count;
+            float actual_hz = 1e6f / avg_dt_us;
+            printf("[ALT] actual_hz=%.1f varioRate=%.1f baro=%.1f gpsTrust=%.3f alt=%.1f vario=%d\n",
+                   (double)actual_hz, (double)actualRateHz, (double)baroAltCm, (double)gpsTrust, (double)zeroedAltitudeCm, estimatedVario);
+            dt_sum_us = 0;
+            dt_count = 0;
+            last_print_ms = now_ms;
+        }
+    }
+#endif
 }
 
 #endif //defined(USE_BARO) || defined(USE_GPS)
