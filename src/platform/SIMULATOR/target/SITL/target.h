@@ -96,6 +96,26 @@
 #define DEFAULT_RX_FEATURE      FEATURE_RX_MSP
 #define DEFAULT_FEATURES        (FEATURE_GPS | FEATURE_TELEMETRY)
 
+// SITL is excluded from the default feature block in common_pre.h
+// (#if !defined(CLOUD_BUILD) && !defined(SITL) ... #endif), so USE_GPS /
+// USE_GPS_RESCUE are never pulled in automatically — leaving the GPS subsystem,
+// the gps_* / gps_rescue_* settings and MSP_RAW_GPS absent from the SITL binary
+// even though DEFAULT_FEATURES advertises FEATURE_GPS. Declare them explicitly
+// so the virtual GPS (fed by bf_sim_bridge fdm_packet position_xyz) and the
+// failsafe_procedure = GPS-RESCUE path are compiled in. The #ifdef USE_GPS
+// block below then enables USE_VIRTUAL_GPS. (GPS_RESCUE needs USE_ACC, which is
+// defined above.)
+//
+// The serial GPS providers (UBLOX/NMEA) are also enabled: BF's GPS subsystem is
+// written assuming at least one serial provider is compiled in (shared gps.c
+// references e.g. lastNavSolTs / initBaudRateCycleCount unconditionally), so a
+// virtual-only build won't compile. They are compiled but inert at runtime —
+// gps_provider defaults to VIRTUAL, so the serial parsers are never invoked.
+#define USE_GPS
+#define USE_GPS_UBLOX
+#define USE_GPS_NMEA
+#define USE_GPS_RESCUE
+
 #ifdef USE_GPS
 #define USE_VIRTUAL_GPS
 #endif

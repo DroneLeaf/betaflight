@@ -80,6 +80,9 @@ static servo_packet pwmPkt;
 static servo_packet_raw pwmRawPkt;
 
 static bool rc_received = false;
+// Set true by udpRCThread on every fresh rc_packet; consumed (cleared) by
+// rxRCFrameStatus. Lets the SITL RX report RX-loss so failsafe can engage.
+static volatile bool rcFrameReceived = false;
 static bool fdm_received = false;
 
 static struct timespec start_time;
@@ -312,7 +315,18 @@ static float readRCSITL(const rxRuntimeState_t *rxRuntimeState, uint8_t channel)
 static uint8_t rxRCFrameStatus(rxRuntimeState_t *rxRuntimeState)
 {
     UNUSED(rxRuntimeState);
-    return RX_FRAME_COMPLETE;
+    // Report COMPLETE only when a fresh rc_packet arrived since the last poll.
+    // When the RC source stops (TX off, leafFC/elrs bridge down, RC unplugged),
+    // no new packets arrive on PORT_RC, so we return PENDING and rx.c's RXLOSS
+    // timer (~150 ms) marks the signal lost -> failsafe runs the configured
+    // procedure (DROP / AUTO-LAND / GPS-RESCUE). This previously returned
+    // RX_FRAME_COMPLETE unconditionally, so BF held the last RC frame forever
+    // and failsafe could never engage in SITL.
+    if (rcFrameReceived) {
+        rcFrameReceived = false;
+        return RX_FRAME_COMPLETE;
+    }
+    return RX_FRAME_PENDING;
 }
 
 static void *udpRCThread(void *data)
@@ -323,6 +337,7 @@ static void *udpRCThread(void *data)
     while (workerRunning) {
         n = udpRecv(&rcLink, &rcPkt, sizeof(rc_packet), 100);
         if (n == sizeof(rc_packet)) {
+            rcFrameReceived = true;
             if (!rc_received) {
                 printf("[SITL] new rc %d: t:%f AETR: %d %d %d %d AUX1-4: %d %d %d %d\n", n, rcPkt.timestamp,
                     rcPkt.channels[0], rcPkt.channels[1],rcPkt.channels[2],rcPkt.channels[3],

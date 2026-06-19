@@ -995,7 +995,16 @@ void initPhase3(void)
     }
 #endif
 
+#ifndef SIMULATOR_BUILD
+    // The power-on arming grace lockout is gated on millis() >= pwr_on_arm_grace
+    // (see fc/core.c). On the SITL target millis() is the software sim-clock fed
+    // by bf_sim_bridge fdm timestamps, which can stall (e.g. after a world reset
+    // sends sim_time backwards). When that happens the grace condition is never
+    // met and arming is permanently denied with "BOOT GRACE", independent of the
+    // pwr_on_arm_grace setting. Boot grace is a real-hardware power-up safety
+    // feature with no meaning in SITL, so never arm the lockout here.
     setArmingDisabled(ARMING_DISABLED_BOOT_GRACE_TIME);
+#endif
 
 // allocate SPI DMA streams before motor timers
 #if defined(USE_SPI) && defined(USE_SPI_DMA_ENABLE_EARLY)
