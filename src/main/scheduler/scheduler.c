@@ -529,7 +529,22 @@ FAST_CODE void scheduler(void)
              * task is non-deterministic
              * Recover as best we can, advancing scheduling by a whole number of cycles
              */
+#if defined(SIMULATOR_BUILD)
+            /* SITL: realign to the most recent MISSED slot, so the gyro runs now.
+             * clockMicrosToCycles() is the identity here (1 cycle = 1 us), so the
+             * hardware realignment below always leaves remaining in [1, period]
+             * while schedLoopStartCycles can sit at its 1-cycle minimum (and its
+             * down-step, 1/SCHED_START_LOOP_DOWN_STEP, truncates to 0): the gyro
+             * would then never be due again and TASK_GYRO/TASK_PID stop for good
+             * while every other task keeps running. One late scheduler pass is
+             * enough — e.g. the first pass after tasksInit() landing >2 gyro
+             * periods late (host preemption, or simRate spikes compressing sim
+             * time) — which is the intermittent SITL boot stall.
+             */
+            nextTargetCycles += desiredPeriodCycles * (schedLoopRemainingCycles / -desiredPeriodCycles);
+#else
             nextTargetCycles += desiredPeriodCycles * (1 + (schedLoopRemainingCycles / -desiredPeriodCycles));
+#endif
             schedLoopRemainingCycles = cmpTimeCycles(nextTargetCycles, nowCycles);
         }
 

@@ -149,17 +149,28 @@ static void updateState(const fdm_packet* pkt)
         return;
     }
 
+    // This thread receives from systemInit() on, but the virtual acc/gyro only
+    // exist after sensorsAutodetect() (initPhase3). A bridge that is already
+    // streaming when BF starts therefore delivers fdm packets first, and
+    // virtualAccSet(NULL, ...) segfaulted at boot. Drop packets until both
+    // devices are published (release-stored after their locks are created).
+    struct accDev_s *accDev = __atomic_load_n(&virtualAccDev, __ATOMIC_ACQUIRE);
+    struct gyroDev_s *gyroDev = __atomic_load_n(&virtualGyroDev, __ATOMIC_ACQUIRE);
+    if (!accDev || !gyroDev) {
+        return;
+    }
+
     int16_t x,y,z;
     x = constrain(-pkt->imu_linear_acceleration_xyz[0] * ACC_SCALE, -32767, 32767);
     y = constrain(-pkt->imu_linear_acceleration_xyz[1] * ACC_SCALE, -32767, 32767);
     z = constrain(-pkt->imu_linear_acceleration_xyz[2] * ACC_SCALE, -32767, 32767);
-    virtualAccSet(virtualAccDev, x, y, z);
+    virtualAccSet(accDev, x, y, z);
 //    printf("[acc]%lf,%lf,%lf\n", pkt->imu_linear_acceleration_xyz[0], pkt->imu_linear_acceleration_xyz[1], pkt->imu_linear_acceleration_xyz[2]);
 
     x = constrain(pkt->imu_angular_velocity_rpy[0] * GYRO_SCALE * RAD2DEG, -32767, 32767);
     y = constrain(-pkt->imu_angular_velocity_rpy[1] * GYRO_SCALE * RAD2DEG, -32767, 32767);
     z = constrain(-pkt->imu_angular_velocity_rpy[2] * GYRO_SCALE * RAD2DEG, -32767, 32767);
-    virtualGyroSet(virtualGyroDev, x, y, z);
+    virtualGyroSet(gyroDev, x, y, z);
 //    printf("[gyr]%lf,%lf,%lf\n", pkt->imu_angular_velocity_rpy[0], pkt->imu_angular_velocity_rpy[1], pkt->imu_angular_velocity_rpy[2]);
 
     // temperature in 0.01 C = 25 deg
@@ -264,10 +275,18 @@ static void* udpThread(void* data)
     return NULL;
 }
 
+// rcPkt is written by udpRCThread and read channel-by-channel by the main
+// loop; publishing whole packets under rcLock keeps a frame from mixing two
+// packets' channels.
+static pthread_mutex_t rcLock = PTHREAD_MUTEX_INITIALIZER;
+
 static float readRCSITL(const rxRuntimeState_t *rxRuntimeState, uint8_t channel)
 {
     UNUSED(rxRuntimeState);
-    return rcPkt.channels[channel];
+    pthread_mutex_lock(&rcLock);
+    const float value = rcPkt.channels[channel];
+    pthread_mutex_unlock(&rcLock);
+    return value;
 }
 
 static uint8_t rxRCFrameStatus(rxRuntimeState_t *rxRuntimeState)
@@ -292,14 +311,18 @@ static void *udpRCThread(void *data)
     UNUSED(data);
     int n = 0;
 
+    rc_packet pkt;
     while (workerRunning) {
-        n = udpRecv(&rcLink, &rcPkt, sizeof(rc_packet), 100);
+        n = udpRecv(&rcLink, &pkt, sizeof(rc_packet), 100);
         if (n == sizeof(rc_packet)) {
+            pthread_mutex_lock(&rcLock);
+            rcPkt = pkt;
+            pthread_mutex_unlock(&rcLock);
             rcFrameReceived = true;
             if (!rc_received) {
-                printf("[SITL] new rc %d: t:%f AETR: %d %d %d %d AUX1-4: %d %d %d %d\n", n, rcPkt.timestamp,
-                    rcPkt.channels[0], rcPkt.channels[1],rcPkt.channels[2],rcPkt.channels[3],
-                    rcPkt.channels[4], rcPkt.channels[5],rcPkt.channels[6],rcPkt.channels[7]);
+                printf("[SITL] new rc %d: t:%f AETR: %d %d %d %d AUX1-4: %d %d %d %d\n", n, pkt.timestamp,
+                    pkt.channels[0], pkt.channels[1], pkt.channels[2], pkt.channels[3],
+                    pkt.channels[4], pkt.channels[5], pkt.channels[6], pkt.channels[7]);
 
                 rxRuntimeState.channelCount = SIMULATOR_MAX_RC_CHANNELS;
                 rxRuntimeState.rcReadRawFn = readRCSITL;
@@ -319,15 +342,28 @@ static void* tcpThread(void* data)
 {
     UNUSED(data);
 
+    // dyad is shared with the main loop (UART open, MSP writes) — every call
+    // holds tcpDyadLock (serial_tcp.c). dyad_update() must therefore never
+    // block inside select() while holding it: poll with a zero timeout and
+    // sleep OUTSIDE the lock. 200 us bounds the added RX latency and is well
+    // below the old 10 ms select wait that delayed TX flushes.
+    tcpDyadLock();
     dyad_init();
     dyad_setTickInterval(0.2f);
-    dyad_setUpdateTimeout(0.01f);
+    dyad_setUpdateTimeout(0.0f);
+    tcpDyadUnlock();
 
+    const struct timespec pollInterval = { .tv_sec = 0, .tv_nsec = 200 * 1000 };
     while (workerRunning) {
+        tcpDyadLock();
         dyad_update();
+        tcpDyadUnlock();
+        nanosleep(&pollInterval, NULL);
     }
 
+    tcpDyadLock();
     dyad_shutdown();
+    tcpDyadUnlock();
     printf("tcpThread end!!\n");
     return NULL;
 }

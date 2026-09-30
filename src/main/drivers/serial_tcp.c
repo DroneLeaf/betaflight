@@ -45,6 +45,32 @@ static tcpPort_t tcpSerialPorts[SERIAL_PORT_COUNT];
 static bool tcpPortInitialized[SERIAL_PORT_COUNT];
 static bool tcpStart = false;
 
+// dyad is not thread-safe, but the SITL drives it from two threads: tcpThread
+// (sitl.c) runs dyad_update() — accepting, reading, flushing, and FREEING any
+// stream in the CLOSED state — while the main loop opens the UART listeners
+// and writes MSP replies. Unserialised, that races in three ways:
+//   * tcpReconfigure: dyad_newStream() returns a CLOSED stream, so
+//     dyad_update() could free it before dyad_listenEx() made it LISTENING —
+//     a use-after-free that left the UART dead (port bound, never accepting)
+//     or hung the boot;
+//   * tcpDataOut: dyad_write() appends to the write buffer that
+//     dyad_update() is flushing/reallocating;
+//   * a client disconnect frees s->conn while the main loop writes to it.
+// Every dyad call therefore holds this lock, and dyad callbacks (onAccept /
+// onData / onClose) run inside dyad_update() under it. Lock order:
+// tcpDyadLock -> port rxLock/txLock.
+static pthread_mutex_t tcpDyadMutex = PTHREAD_MUTEX_INITIALIZER;
+
+void tcpDyadLock(void)
+{
+    pthread_mutex_lock(&tcpDyadMutex);
+}
+
+void tcpDyadUnlock(void)
+{
+    pthread_mutex_unlock(&tcpDyadMutex);
+}
+
 bool tcpIsStart(void)
 {
     return tcpStart;
@@ -112,11 +138,14 @@ static tcpPort_t* tcpReconfigure(tcpPort_t *s, int id)
     s->clientCount = 0;
     s->id = id;
     s->conn = NULL;
+    tcpDyadLock();  // the new stream is CLOSED until listening — see tcpDyadMutex
     s->serv = dyad_newStream();
     dyad_setNoDelay(s->serv, 1);
     dyad_addListener(s->serv, DYAD_EVENT_ACCEPT, onAccept, s);
+    const int listenErr = dyad_listenEx(s->serv, NULL, BASE_PORT + id + 1, 10);
+    tcpDyadUnlock();
 
-    if (dyad_listenEx(s->serv, NULL, BASE_PORT + id + 1, 10) == 0) {
+    if (listenErr == 0) {
         fprintf(stderr, "bind port %u for UART%u\n", (unsigned)BASE_PORT + id + 1, (unsigned)id + 1);
     } else {
         fprintf(stderr, "bind port %u for UART%u failed!!\n", (unsigned)BASE_PORT + id + 1, (unsigned)id + 1);
@@ -235,7 +264,13 @@ static void tcpWrite(serialPort_t *instance, uint8_t ch)
 void tcpDataOut(tcpPort_t *instance)
 {
     tcpPort_t *s = (tcpPort_t *)instance;
-    if (s->conn == NULL) return;
+    // s->conn is set/cleared by dyad callbacks, which run under tcpDyadLock:
+    // test and use it under the same lock (a disconnect frees the stream).
+    tcpDyadLock();
+    if (s->conn == NULL) {
+        tcpDyadUnlock();
+        return;
+    }
     pthread_mutex_lock(&s->txLock);
 
     if (s->port.txBufferHead < s->port.txBufferTail) {
@@ -250,6 +285,7 @@ void tcpDataOut(tcpPort_t *instance)
     s->port.txBufferTail = s->port.txBufferHead;
 
     pthread_mutex_unlock(&s->txLock);
+    tcpDyadUnlock();
 }
 
 void tcpDataIn(tcpPort_t *instance, uint8_t* ch, int size)

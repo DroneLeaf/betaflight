@@ -48,6 +48,11 @@ serialPort_t *serTcpOpen(serialPortIdentifier_e id, serialReceiveCallbackPtr rxC
 void tcpDataIn(tcpPort_t *instance, uint8_t* ch, int size);
 void tcpDataOut(tcpPort_t *instance);
 
+// dyad is not thread-safe and the SITL drives it from two threads (see
+// serial_tcp.c): hold this lock around EVERY dyad call.
+void tcpDyadLock(void);
+void tcpDyadUnlock(void);
+
 bool tcpIsStart(void);
 bool* tcpGetUsed(void);
 tcpPort_t* tcpGetPool(void);
