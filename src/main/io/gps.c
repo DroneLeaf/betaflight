@@ -77,6 +77,10 @@ uint32_t GPS_distanceFlownInCm;     // distance flown since armed in centimeters
 #define GPS_DISTANCE_FLOWN_MIN_SPEED_THRESHOLD_CM_S 15 // 0.54 km/h 0.335 mph
 
 gpsSolutionData_t gpsSol;
+#ifdef USE_LEAF_TELEMETRY
+uint32_t leafGpsSolutionTimeUs = 0;    // micros() of the latest solution (fix or not)
+uint32_t leafGpsSolutionCount = 0;     // increments on every solution
+#endif
 uint8_t GPS_update = 0;             // toogle to distinct a GPS position update (directly or via MSP)
 
 uint8_t GPS_numCh;                              // Details on numCh/svinfo in gps.h
@@ -2674,6 +2678,12 @@ void GPS_distance2d(const gpsLocation_t *from, const gpsLocation_t *to, vector2_
 
 void onGpsNewData(void)
 {
+#ifdef USE_LEAF_TELEMETRY
+    // Every solution, fix or not: the companion timestamps it and sees no-fix states too.
+    leafGpsSolutionTimeUs = micros();
+    leafGpsSolutionCount++;
+#endif
+
     if (!STATE(GPS_FIX)) {
         // if we don't have a 3D fix don't give data to GPS rescue
         return;

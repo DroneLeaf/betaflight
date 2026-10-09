@@ -604,7 +604,7 @@ void mspSerialInit(void)
     mspSerialAllocatePorts();
 }
 
-int mspSerialPush(serialPortIdentifier_e port, uint8_t cmd, uint8_t *data, int datalen, mspDirection_e direction, mspVersion_e mspVersion)
+int mspSerialPush(serialPortIdentifier_e port, uint16_t cmd, uint8_t *data, int datalen, mspDirection_e direction, mspVersion_e mspVersion)
 {
     int ret = 0;
 
@@ -631,6 +631,37 @@ int mspSerialPush(serialPortIdentifier_e port, uint8_t cmd, uint8_t *data, int d
     }
     return ret; // return the number of bytes written
 }
+
+#ifdef USE_LEAF_TELEMETRY
+serialPortIdentifier_e mspSerialResolvePushPort(serialPortIdentifier_e requested, serialPortIdentifier_e excluded)
+{
+    serialPortIdentifier_e firstPushable = SERIAL_PORT_NONE;
+
+    for (const mspPort_t *mspPort = mspPorts; mspPort < ARRAYEND(mspPorts); mspPort++) {
+        if (!mspPort->port || mspPort->port->identifier == SERIAL_PORT_USB_VCP
+            || mspPort->sharedWithTelemetry || mspPort->port->identifier == excluded) {
+            continue;
+        }
+        if (mspPort->port->identifier == requested) {
+            return requested;
+        }
+        if (firstPushable == SERIAL_PORT_NONE) {
+            firstPushable = mspPort->port->identifier;
+        }
+    }
+    return firstPushable;
+}
+
+uint32_t mspSerialTxBytesFreeOnPort(serialPortIdentifier_e identifier)
+{
+    for (const mspPort_t *mspPort = mspPorts; mspPort < ARRAYEND(mspPorts); mspPort++) {
+        if (mspPort->port && mspPort->port->identifier == identifier) {
+            return serialTxBytesFree(mspPort->port);
+        }
+    }
+    return 0;
+}
+#endif // USE_LEAF_TELEMETRY
 
 uint32_t mspSerialTxBytesFree(void)
 {

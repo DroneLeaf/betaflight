@@ -131,5 +131,13 @@ void mspSerialAllocatePorts(void);
 void mspSerialReleasePortIfAllocated(struct serialPort_s *serialPort);
 void mspSerialReleaseSharedTelemetryPorts(void);
 mspDescriptor_t getMspSerialPortDescriptor(const serialPortIdentifier_e portIdentifier);
-int mspSerialPush(serialPortIdentifier_e port, uint8_t cmd, uint8_t *data, int datalen, mspDirection_e direction, mspVersion_e mspVersion);
+int mspSerialPush(serialPortIdentifier_e port, uint16_t cmd, uint8_t *data, int datalen, mspDirection_e direction, mspVersion_e mspVersion);
 uint32_t mspSerialTxBytesFree(void);
+#ifdef USE_LEAF_TELEMETRY
+// Allocated, non-VCP MSP port matching 'requested'; with SERIAL_PORT_ALL (or no match) the
+// first such port. Ports shared with telemetry (released on arming) and 'excluded' (e.g. the
+// MSP displayport) are never chosen. SERIAL_PORT_NONE when there is none.
+serialPortIdentifier_e mspSerialResolvePushPort(serialPortIdentifier_e requested, serialPortIdentifier_e excluded);
+// TX bytes free on one allocated MSP port (0 when the port is not an allocated MSP port).
+uint32_t mspSerialTxBytesFreeOnPort(serialPortIdentifier_e identifier);
+#endif

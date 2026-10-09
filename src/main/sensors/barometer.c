@@ -60,6 +60,10 @@
 #include "barometer.h"
 
 baro_t baro;                        // barometer access functions
+#ifdef USE_LEAF_TELEMETRY
+uint32_t leafBaroSampleTimeUs = 0;  // micros() of the latest valid pressure sample
+uint32_t leafBaroSampleCount = 0;   // increments on every valid pressure sample
+#endif
 
 PG_REGISTER_WITH_RESET_FN(barometerConfig_t, barometerConfig, PG_BAROMETER_CONFIG, 3);
 
@@ -461,6 +465,12 @@ uint32_t baroUpdate(timeUs_t currentTimeUs)
 
             // update baro data
             baro.dev.calculate(&baro.pressure, &baro.temperature);
+#ifdef USE_LEAF_TELEMETRY
+            if (baro.pressure > 0) {
+                leafBaroSampleTimeUs = micros();
+                leafBaroSampleCount++;
+            }
+#endif
 
             // If baro.pressure is invalid then skip altitude counting / call of calibration cycle
             if (baro.pressure > 0) {

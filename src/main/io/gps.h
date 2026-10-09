@@ -315,6 +315,10 @@ typedef enum {
 
 extern gpsData_t gpsData;
 extern gpsSolutionData_t gpsSol;
+#ifdef USE_LEAF_TELEMETRY
+extern uint32_t leafGpsSolutionTimeUs;
+extern uint32_t leafGpsSolutionCount;
+#endif
 
 #define GPS_SV_MAXSATS_LEGACY   16U
 #define GPS_SV_MAXSATS_M8N      32U                     // must be larger than MAXSATS_LEGACY

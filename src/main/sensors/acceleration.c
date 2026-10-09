@@ -40,6 +40,9 @@
 #include "acceleration.h"
 
 FAST_DATA_ZERO_INIT acc_t acc;                       // acc access functions
+#ifdef USE_LEAF_TELEMETRY
+uint32_t leafAccClipCount = 0;                       // raw samples at full scale, read by msp_leaf_telemetry
+#endif
 
 static inline void alignAccelerometer(void)
 {
@@ -114,6 +117,11 @@ void accUpdate(timeUs_t currentTimeUs)
 
     for (int axis = 0; axis < XYZ_AXIS_COUNT; axis++) {
         acc.accADC.v[axis] = acc.dev.ADCRaw[axis];
+#ifdef USE_LEAF_TELEMETRY
+        if (acc.dev.ADCRaw[axis] >= INT16_MAX || acc.dev.ADCRaw[axis] <= -INT16_MAX) {
+            leafAccClipCount++;
+        }
+#endif
     }
 
     alignAccelerometer();

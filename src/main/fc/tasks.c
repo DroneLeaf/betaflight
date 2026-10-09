@@ -111,6 +111,10 @@
 #include "io/usb_cdc_hid.h"
 #endif
 
+#ifdef USE_LEAF_TELEMETRY
+#include "msp/msp_leaf_telemetry.h"
+#endif
+
 #include "tasks.h"
 
 // taskUpdateRxMain() has occasional peaks in execution time so normal moving average duration estimation doesn't work
@@ -478,6 +482,10 @@ task_attribute_t task_attributes[TASK_COUNT] = {
 #ifdef USE_GIMBAL
     [TASK_GIMBAL] = DEFINE_TASK("GIMBAL", NULL, NULL, gimbalUpdate, TASK_PERIOD_HZ(100), TASK_PRIORITY_MEDIUM),
 #endif
+
+#ifdef USE_LEAF_TELEMETRY
+    [TASK_LEAF_TELEMETRY] = DEFINE_TASK("LEAF_TLM", NULL, NULL, taskLeafTelemetry, TASK_PERIOD_HZ(200), TASK_PRIORITY_MEDIUM),
+#endif
 };
 
 task_t *getTask(unsigned taskId)
@@ -670,5 +678,14 @@ void tasksInit(void)
 
 #ifdef USE_GIMBAL
     setTaskEnabled(TASK_GIMBAL, true);
+#endif
+
+#ifdef USE_LEAF_TELEMETRY
+    leafTelemetryInit();
+    const uint16_t leafTelemetryRateHz = leafTelemetryTaskRateHz();
+    if (leafTelemetryRateHz > 0) {
+        setTaskEnabled(TASK_LEAF_TELEMETRY, true);
+        rescheduleTask(TASK_LEAF_TELEMETRY, TASK_PERIOD_HZ(leafTelemetryRateHz));
+    }
 #endif
 }

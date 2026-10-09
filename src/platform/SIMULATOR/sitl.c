@@ -202,7 +202,11 @@ static void updateState(const fdm_packet* pkt)
     if (course < 0.0) {
         course += 360.0;
     }
-    setVirtualGPS(latitude, longitude, altitude, speed, speed3D, course);
+    // velocity_xyz is ENU (Ve, Vn, Vup)
+    const double velN = pkt->velocity_xyz[1];
+    const double velE = pkt->velocity_xyz[0];
+    const double velD = -pkt->velocity_xyz[2];
+    setVirtualGPS(latitude, longitude, altitude, speed, speed3D, course, velN, velE, velD);
 #endif
 
 #if defined(SIMULATOR_IMU_SYNC)
