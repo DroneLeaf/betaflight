@@ -106,7 +106,7 @@ extern "C" {
     bool failsafeIsActive(void) {return false;}
     const serialPortConfig_t *findSerialPortConfig(serialPortFunction_e) {return findSerialPortConfig_stub_retval;}
     bool isRangeActive(uint8_t , const channelRange_t *) {return true;}
-    int mspSerialPush(serialPortIdentifier_e, uint8_t, uint8_t *, int, mspDirection_e, mspVersion_e) {return 0;}
+    int mspSerialPush(serialPortIdentifier_e, uint16_t, uint8_t *, int, mspDirection_e, mspVersion_e) {return 0;}
     void tfp_sprintf(char *, char*, ...) {}
 
     mspDescriptor_t getMspSerialPortDescriptor(const uint8_t ) {return 0;}

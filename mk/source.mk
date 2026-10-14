@@ -24,6 +24,7 @@ PG_SRC = \
             pg/mco.c \
             pg/motor.c \
             pg/msp.c \
+            pg/leaf_telemetry.c \
             pg/pg.c \
             pg/pilot.c \
             pg/piniobox.c \
@@ -135,6 +136,7 @@ COMMON_SRC = \
             msp/msp.c \
             msp/msp_box.c \
             msp/msp_build_info.c \
+            msp/msp_leaf_telemetry.c \
             msp/msp_serial.c \
             scheduler/scheduler.c \
             sensors/adcinternal.c \

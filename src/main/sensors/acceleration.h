@@ -69,6 +69,9 @@ typedef struct acc_s {
 } acc_t;
 
 extern acc_t acc;
+#ifdef USE_LEAF_TELEMETRY
+extern uint32_t leafAccClipCount;
+#endif
 
 typedef struct rollAndPitchTrims_s {
     int16_t roll;

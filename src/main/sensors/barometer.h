@@ -61,6 +61,10 @@ typedef struct baro_s {
 } baro_t;
 
 extern baro_t baro;
+#ifdef USE_LEAF_TELEMETRY
+extern uint32_t leafBaroSampleTimeUs;
+extern uint32_t leafBaroSampleCount;
+#endif
 
 void baroPreInit(void);
 void baroInit(void);

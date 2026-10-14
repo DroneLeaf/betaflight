@@ -113,6 +113,7 @@
 #include "pg/rcdevice.h"
 #include "pg/stats.h"
 #include "pg/board.h"
+#include "pg/leaf_telemetry.h"
 
 #include "rx/a7105_flysky.h"
 #include "rx/cc2500_frsky_common.h"
@@ -608,6 +609,13 @@ const char* const lookupTableYawType[] = {
 };
 #endif // USE_WING
 
+#ifdef USE_LEAF_TELEMETRY
+// Order must match leafMspPort_e (pg/leaf_telemetry.h)
+static const char * const lookupTableLeafMspPort[] = {
+    "AUTO", "UART1", "UART2", "UART3", "UART4", "UART5", "UART6", "UART7", "UART8", "UART9", "UART10"
+};
+#endif
+
 #define LOOKUP_TABLE_ENTRY(name) { name, ARRAYLEN(name) }
 
 const lookupTableEntry_t lookupTables[] = {
@@ -741,6 +749,9 @@ const lookupTableEntry_t lookupTables[] = {
     LOOKUP_TABLE_ENTRY(lookupTableTpaSpeedType),
     LOOKUP_TABLE_ENTRY(lookupTableYawType),
 #endif // USE_WING
+#ifdef USE_LEAF_TELEMETRY
+    LOOKUP_TABLE_ENTRY(lookupTableLeafMspPort),
+#endif
 };
 
 #undef LOOKUP_TABLE_ENTRY
@@ -2032,6 +2043,14 @@ const clivalue_t valueTable[] = {
     { "gimbal_yaw_limit",          VAR_INT8 | MASTER_VALUE, .config.minmaxUnsigned = { -100, 100 }, PG_GIMBAL_TRACK_CONFIG, offsetof(gimbalTrackConfig_t, gimbal_yaw_limit) },
     { "gimbal_stabilisation",      VAR_INT8 | MASTER_VALUE, .config.minmaxUnsigned = { 0, 7 }, PG_GIMBAL_TRACK_CONFIG, offsetof(gimbalTrackConfig_t, gimbal_stabilisation) },
     { "gimbal_sensitivity",        VAR_INT8 | MASTER_VALUE, .config.minmaxUnsigned = { -16, 15 }, PG_GIMBAL_TRACK_CONFIG, offsetof(gimbalTrackConfig_t, gimbal_sensitivity) },
+#endif
+
+// PG_LEAF_TELEMETRY_CONFIG
+#ifdef USE_LEAF_TELEMETRY
+    { "leaf_imu_msp_rate",       VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = { 0, 1000 }, PG_LEAF_TELEMETRY_CONFIG, offsetof(leafTelemetryConfig_t, imu_rate_hz) },
+    { "leaf_baro_msp_rate",      VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = { 0, 1000 }, PG_LEAF_TELEMETRY_CONFIG, offsetof(leafTelemetryConfig_t, baro_rate_hz) },
+    { "leaf_gps_msp_rate",       VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = { 0, 1000 }, PG_LEAF_TELEMETRY_CONFIG, offsetof(leafTelemetryConfig_t, gps_rate_hz) },
+    { "leaf_messages_msp_port",  VAR_UINT8  | MASTER_VALUE | MODE_LOOKUP, .config.lookup = { TABLE_LEAF_MSP_PORT }, PG_LEAF_TELEMETRY_CONFIG, offsetof(leafTelemetryConfig_t, msp_port) },
 #endif
 };
 
