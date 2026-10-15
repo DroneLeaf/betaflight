@@ -268,6 +268,15 @@ void tcpDataOut(tcpPort_t *instance)
     // test and use it under the same lock (a disconnect frees the stream).
     tcpDyadLock();
     if (s->conn == NULL) {
+        // No client: a real UART's bytes go out on the wire whether anything listens or
+        // not, so drop them. Kept, they filled the ring; then every later write (MSP
+        // replies, LEAF telemetry pushes) was refused for lack of space, and as this is
+        // only ever called from a write, nothing drained it again — the UART stayed dead
+        // after a client connected (UART2, which LEAF telemetry pushes from boot, came up
+        // silent whenever its ring had filled before the client arrived).
+        pthread_mutex_lock(&s->txLock);
+        s->port.txBufferTail = s->port.txBufferHead;
+        pthread_mutex_unlock(&s->txLock);
         tcpDyadUnlock();
         return;
     }

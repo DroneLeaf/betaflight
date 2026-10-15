@@ -505,6 +505,17 @@ FAST_CODE void scheduler(void)
     uint32_t nextTargetCycles = 0;
     int32_t schedLoopRemainingCycles;
     bool firstSchedulingOpportunity = false;
+#if defined(SIMULATOR_BUILD)
+    // SITL: run a due non-realtime task on every pass, without the "does it fit before the
+    // next gyro sample" test. The SITL main loop sleeps RUN_LOOP_DELAY_US (~100 us real on
+    // Linux) after each pass, so at an 8 kHz gyro nearly every pass arrives late and the test
+    // starved everything else (measured: LEAF_TLM 67/200 Hz, SERIAL 27/100, ATTITUDE 42/100,
+    // ACC 375/1000, GPS 42/100). Late gyro samples cost nothing here: the simulated sensors
+    // change only once per FDM packet (250 Hz).
+    const bool runRegardlessOfFit = true;
+#else
+    const bool runRegardlessOfFit = false;
+#endif
 
 #if defined(UNIT_TEST)
     if (nextTargetCycles == 0) {
@@ -715,7 +726,7 @@ FAST_CODE void scheduler(void)
     nowCycles = getCycleCounter();
     schedLoopRemainingCycles = cmpTimeCycles(nextTargetCycles, nowCycles);
 
-    if (!gyroEnabled || (schedLoopRemainingCycles > (int32_t)clockMicrosToCycles(CHECK_GUARD_MARGIN_US))) {
+    if (!gyroEnabled || runRegardlessOfFit || (schedLoopRemainingCycles > (int32_t)clockMicrosToCycles(CHECK_GUARD_MARGIN_US))) {
         currentTimeUs = micros();
 
         // Update task dynamic priorities
@@ -756,7 +767,7 @@ FAST_CODE void scheduler(void)
 
                     // If there's no time to run the task, discount it from prioritisation unless aged sufficiently
                     // Don't block the SERIAL task.
-                    if ((taskRequiredTimeCycles < schedLoopRemainingCycles) ||
+                    if (runRegardlessOfFit || (taskRequiredTimeCycles < schedLoopRemainingCycles) ||
                         ((scheduleCount & SCHED_TASK_DEFER_MASK) == 0) ||
                         ((task - tasks) == TASK_SERIAL)) {
                         selectedTaskDynamicPriority = task->dynamicPriority;
@@ -785,7 +796,7 @@ FAST_CODE void scheduler(void)
             // Allow a little extra time
             taskRequiredTimeCycles += taskGuardCycles;
 
-            if (!gyroEnabled || firstSchedulingOpportunity || (taskRequiredTimeCycles < schedLoopRemainingCycles)) {
+            if (!gyroEnabled || firstSchedulingOpportunity || runRegardlessOfFit || (taskRequiredTimeCycles < schedLoopRemainingCycles)) {
                 uint32_t antipatedEndCycles = nowCycles + taskRequiredTimeCycles;
                 taskExecutionTimeUs += schedulerExecuteTask(selectedTask, currentTimeUs);
                 nowCycles = getCycleCounter();

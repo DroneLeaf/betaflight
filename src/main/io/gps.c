@@ -1351,10 +1351,14 @@ static void calculateNavInterval (void)
 #if defined(USE_VIRTUAL_GPS)
 static void updateVirtualGPS(void)
 {
-    const uint32_t updateInterval = 100; // 100ms 10Hz update time interval
+    // One solution per gps_update_rate_hz period — the rate a real receiver is configured to.
+    // The next solution is due one period after the previous DUE time (not after the GPS
+    // task happened to run), so the task's 10 ms granularity cannot stretch the period: a
+    // fixed "now + 100 ms" delivered ~8.5 Hz instead of 10.
+    const uint32_t updateInterval = 1000 / constrain(gpsConfig()->gps_update_rate_hz, 1, 20);
     static uint32_t nextUpdateTime = 0;
 
-    if (cmp32(gpsData.now, nextUpdateTime) > 0) {
+    if (cmp32(gpsData.now, nextUpdateTime) >= 0) {
         if (gpsData.state == GPS_STATE_INITIALIZED) {
             gpsSetState(GPS_STATE_RECEIVING_DATA);
         }
@@ -1375,7 +1379,12 @@ static void updateVirtualGPS(void)
         calculateNavInterval();
         onGpsNewData();
 
-        nextUpdateTime = gpsData.now + updateInterval;
+        nextUpdateTime += updateInterval;
+        if (cmp32(gpsData.now, nextUpdateTime) >= 0) {
+            // First solution, or the sim stalled for more than a period: restart the grid
+            // from now rather than firing a burst of back-to-back solutions.
+            nextUpdateTime = gpsData.now + updateInterval;
+        }
     }
 }
 #endif
