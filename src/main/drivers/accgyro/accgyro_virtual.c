@@ -111,6 +111,8 @@ accDev_t *virtualAccDev;
 
 static void virtualAccInit(accDev_t *acc)
 {
+    // Must match ACC_SCALE in sitl.c (counts per g).
+    acc->acc_1G = 2048;
 #if defined(SIMULATOR_BUILD) && defined(SIMULATOR_MULTITHREAD)
     if (pthread_mutex_init(&acc->lock, NULL) != 0) {
         printf("Create acc lock error!\n");

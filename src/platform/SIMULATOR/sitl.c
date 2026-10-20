@@ -161,7 +161,11 @@ int lockMainPID(void)
 }
 
 #define RAD2DEG (180.0 / M_PI)
-#define ACC_SCALE (256 / 9.80665)
+// 2048 counts per g, like the MPU6000/ICM42688 at +-16 g (accgyro_virtual.c
+// sets acc_1G to match). The Configurator's Sensors tab assumes 2048; at the
+// old 256 it showed 0.125 g at rest. LEAF_IMU sends m/s^2 (counts * acc_1G_rec
+// * g), so its values do not depend on this scale.
+#define ACC_SCALE (2048 / 9.80665)
 #define GYRO_SCALE (16.4)
 
 static void sendMotorUpdate(void)
@@ -202,8 +206,12 @@ static void updateState(const fdm_packet* pkt)
         return;
     }
 
+    // The packet is FRD (bf_sim_bridge sends the FLU specific force as
+    // (f_x, -f_y, -f_z)). Betaflight's sensor frame is FLU, the same mapping as
+    // the gyro below: x kept, y and z negated. Level at rest reads (0, 0, +1 g);
+    // nose down reads x < 0; speeding up forward reads x > 0.
     int16_t x,y,z;
-    x = constrain(-pkt->imu_linear_acceleration_xyz[0] * ACC_SCALE, -32767, 32767);
+    x = constrain(pkt->imu_linear_acceleration_xyz[0] * ACC_SCALE, -32767, 32767);
     y = constrain(-pkt->imu_linear_acceleration_xyz[1] * ACC_SCALE, -32767, 32767);
     z = constrain(-pkt->imu_linear_acceleration_xyz[2] * ACC_SCALE, -32767, 32767);
     virtualAccSet(accDev, x, y, z);
