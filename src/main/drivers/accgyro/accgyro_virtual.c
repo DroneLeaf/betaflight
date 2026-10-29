@@ -138,11 +138,20 @@ void virtualAccSet(accDev_t *acc, int16_t x, int16_t y, int16_t z)
 
 static bool virtualAccRead(accDev_t *acc)
 {
+    // A real accelerometer delivers a sample every period (acc.sampleRateHz,
+    // 1 kHz here) and acc_lpf_hz's PT2 gain is computed for that period. The
+    // simulator sets a value once per FDM packet (250 Hz from bf_sim_bridge),
+    // so once the first one has arrived every read returns the latest value.
+    // Reporting "no data" between packets ran the PT2 at the packet rate with
+    // the 1 kHz gain: 4x slower, ~35 ms of lag at acc_lpf_hz 25 instead of ~8.
+    static bool hasData = false;
+
     accDevLock(acc);
-    if (acc->dataReady == false) {
+    if (acc->dataReady == false && !hasData) {
         accDevUnLock(acc);
         return false;
     }
+    hasData = true;
     acc->dataReady = false;
 
     acc->ADCRaw[X] = virtualAccData[X];
