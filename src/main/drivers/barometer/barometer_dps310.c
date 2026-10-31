@@ -119,6 +119,11 @@ static baroState_t  baroState;
 
 static uint8_t buf[6];
 static uint8_t chipId[1];
+// The SPL06-001 answers with the DPS310's ID (0x10) and shares its registers and
+// compensation, but has no COEF_SRCE register: its coefficients are calibrated
+// against the MEMS temperature sensor, so TMP_EXT must be set. Only selectable
+// (baro_hardware = SPL06), as the two chips can't be told apart.
+static bool isSpl06;
 
 // Helper functions
 static uint8_t registerRead(const extDevice_t *dev, uint8_t reg)
@@ -233,7 +238,8 @@ static bool deviceConfigure(const extDevice_t *dev)
     if (chipId[0] == SPL07_003_CHIP_ID) {
         registerSetBits(dev, DPS310_REG_TMP_CFG, DPS310_TMP_CFG_BIT_TMP_RATE_32HZ | DPS310_TMP_CFG_BIT_TMP_PRC_16);
     } else {
-        const uint8_t tempCoefSource = registerRead(dev, DPS310_REG_COEF_SRCE) & DPS310_COEF_SRCE_BIT_TMP_COEF_SRCE;
+        const uint8_t tempCoefSource = isSpl06 ? DPS310_TMP_CFG_BIT_TMP_EXT
+            : registerRead(dev, DPS310_REG_COEF_SRCE) & DPS310_COEF_SRCE_BIT_TMP_COEF_SRCE;
         registerSetBits(dev, DPS310_REG_TMP_CFG, DPS310_TMP_CFG_BIT_TMP_RATE_32HZ | DPS310_TMP_CFG_BIT_TMP_PRC_16 | tempCoefSource);
     }
 
@@ -384,7 +390,7 @@ static void deviceDeInit(const extDevice_t *dev)
 #endif
 }
 
-bool baroDPS310Detect(baroDev_t *baro)
+static bool detect(baroDev_t *baro)
 {
     extDevice_t *dev = &baro->dev;
     bool defaultAddressApplied = false;
@@ -425,6 +431,18 @@ bool baroDPS310Detect(baroDev_t *baro)
     baro->calculate = deviceCalculate;
 
     return true;
+}
+
+bool baroDPS310Detect(baroDev_t *baro)
+{
+    isSpl06 = false;
+    return detect(baro);
+}
+
+bool baroSPL06Detect(baroDev_t *baro)
+{
+    isSpl06 = true;
+    return detect(baro);
 }
 
 #endif
