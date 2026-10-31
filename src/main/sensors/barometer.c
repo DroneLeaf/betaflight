@@ -336,6 +336,17 @@ static bool baroDetect(baroDev_t *baroDev, baroSensor_e baroHardwareToUse)
     case BARO_NONE:
         baroHardware = BARO_NONE;
         break;
+
+    case BARO_SPL06:
+        // Outside the AUTO chain: an SPL06 also answers the DPS310 probe, so AUTO
+        // keeps finding it as a DPS310 (with the wrong temperature sensor).
+#if defined(USE_BARO_DPS310) || defined(USE_BARO_SPI_DPS310)
+        if (baroSPL06Detect(baroDev)) {
+            break;
+        }
+#endif
+        baroHardware = BARO_NONE;
+        break;
     }
 
     if (baroHardware == BARO_NONE) {
