@@ -8,6 +8,12 @@
 #
 # Output: obj/betaflight_<version>_<MCU>_<BOARD>.hex
 #
+# Environment:
+#   BETAFLIGHT_DIR=<dir>  build that checkout instead of this script's own (CI
+#                         uses it to build any commit with this script)
+#   REV=yes               put the commit in the file name, as upstream's release
+#                         builds do: ..._<BOARD>_<commit>.hex
+#
 # Why this and not a plain `make CONFIG=<BOARD>`:
 #   A plain local build is a "classic" build: every optional feature comes from
 #   common_pre.h, which is read AFTER the board's config.h. Board defaults that
@@ -35,7 +41,7 @@
 # build request's response.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "${BETAFLIGHT_DIR:-$(dirname "$0")/..}"
 
 board=MICOAIR743V2
 if [ $# -gt 0 ] && [[ $1 != -D* ]]; then
@@ -62,8 +68,13 @@ STANDARD_OPTIONS=(
 )
 flags="$(printf -- '-D%s ' "${STANDARD_OPTIONS[@]}")$*"
 
-make arm_sdk_install           # the ARM compiler, into tools/ (no-op once installed)
-make configs                   # board definitions (the src/config submodule)
+# Board definitions first: until src/config is there the Makefile refuses
+# every other target.
+make configs
+# The ARM compiler, into tools/, only when it isn't there: arm_sdk_install
+# downloads it again whenever its archive in downloads/ is gone (a CI cache
+# holds tools/ only).
+make -s arm_sdk_version > /dev/null 2>&1 || make arm_sdk_install
 
 if [ ! -f "src/config/configs/$board/config.h" ]; then
     echo "unknown board '$board' (not in src/config/configs)" >&2
@@ -83,5 +94,5 @@ fi
 make "${board}_clean" > /dev/null
 
 echo "building $board at $(git rev-parse --abbrev-ref HEAD) $commit with: $flags"
-make -j"$(nproc)" "$board" EXTRA_FLAGS="$flags"
-ls -l obj/betaflight_*_"$board".hex
+make -j"$(nproc)" "$board" EXTRA_FLAGS="$flags" ${REV:+REV=$REV}
+ls -lt obj/betaflight_*_"$board"*.hex | head -1

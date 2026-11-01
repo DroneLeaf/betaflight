@@ -1,0 +1,107 @@
+# DroneLeaf flight-controller firmware: the .hex of one commit, built like a
+# Betaflight cloud build with the team's options (droneleaf/build_fc.sh).
+#
+# - A release is published: builds the tagged commit and attaches the hex to
+#   the release.
+# - Run workflow (Actions tab): builds any commit and keeps the hex as a
+#   downloadable artifact. "commit" takes a SHA (short or full), a branch or a
+#   tag; empty = the branch the run is started from. The commit needs no build
+#   script of its own: the script comes from the branch the run is started from,
+#   and the commit's tree is left untouched, so the firmware reports that commit.
+#
+# The hex is named betaflight_<version>_<MCU>_<BOARD>_<commit>.hex, the commit
+# being the one `version` on the FC then shows. GitHub delivers an artifact as a
+# zip holding that file.
+name: DroneLeaf FC build
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: 'Commit to build: SHA, branch or tag (empty = the branch selected above)'
+        required: false
+        default: ''
+      board:
+        description: 'Board, as named in src/config/configs'
+        required: false
+        default: MICOAIR743V2
+
+permissions:
+  contents: write   # attach the hex to the release
+
+jobs:
+  build:
+    name: Build ${{ inputs.board || 'MICOAIR743V2' }}
+    runs-on: ubuntu-latest
+    env:
+      BOARD: ${{ inputs.board || 'MICOAIR743V2' }}
+      COMMIT: ${{ inputs.commit || github.sha }}
+
+    steps:
+      - name: Checkout the build script
+        uses: actions/checkout@v5
+        with:
+          path: devops
+          sparse-checkout: droneleaf
+
+      # The whole history, without file contents until checkout, so that any
+      # commit (a short SHA too) can be selected below.
+      - name: Checkout the firmware source
+        uses: actions/checkout@v5
+        with:
+          path: firmware
+          fetch-depth: 0
+          filter: tree:0
+
+      - name: Select the commit to build
+        working-directory: firmware
+        run: |
+          sha=$(git rev-parse --verify -q "$COMMIT^{commit}" \
+                || git rev-parse --verify -q "origin/$COMMIT^{commit}") \
+            || { echo "::error::'$COMMIT' is not a commit, branch or tag of this repository"; exit 1; }
+          git checkout -q --detach "$sha"
+          git log -1 --format='Building %H: %s'
+
+      - name: Cache the ARM toolchain
+        uses: actions/cache@v4
+        with:
+          path: firmware/tools
+          key: ${{ runner.os }}-arm-sdk-${{ hashFiles('firmware/mk/tools.mk') }}
+
+      - name: Build
+        env:
+          BETAFLIGHT_DIR: ${{ github.workspace }}/firmware
+          REV: 'yes'
+        run: devops/droneleaf/build_fc.sh "$BOARD"
+
+      - name: Find the hex
+        id: hex
+        run: |
+          shopt -s nullglob
+          hexes=(firmware/obj/betaflight_*_"$BOARD"_*.hex)
+          if [ ${#hexes[@]} -ne 1 ]; then
+            echo "::error::expected one hex for $BOARD, found ${#hexes[@]}: ${hexes[*]}"
+            exit 1
+          fi
+          echo "path=${hexes[0]}" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "${hexes[0]}" .hex)" >> "$GITHUB_OUTPUT"
+          {
+            echo "### $(basename "${hexes[0]}")"
+            echo "Commit \`$(git -C firmware rev-parse HEAD)\`, board \`$BOARD\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the hex
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.hex.outputs.name }}
+          path: ${{ steps.hex.outputs.path }}
+          if-no-files-found: error
+
+      - name: Attach the hex to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEX: ${{ steps.hex.outputs.path }}
+        run: gh release upload "$GITHUB_REF_NAME" "$HEX" --clobber -R "$GITHUB_REPOSITORY"
