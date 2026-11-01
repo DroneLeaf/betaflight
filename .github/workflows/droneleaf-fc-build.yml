@@ -1,17 +1,19 @@
-# DroneLeaf flight-controller firmware: the .hex of one commit, built like a
-# Betaflight cloud build with the team's options (droneleaf/build_fc.sh).
+# DroneLeaf flight-controller firmware: the .hex of one commit, built with a
+# plain `make <BOARD>_rev FORKNAME=droneleaf`, as software-stack's
+# betaflight_build.yml does. Settings are not part of the build: after
+# flashing, apply the airframe's baseline from leaf-racer-db-migration
+# (betaflight/<size>.txt), which pins what a plain build does not default
+# (the MicoAir743 V2's GPS port).
 #
 # - A release is published: builds the tagged commit and attaches the hex to
 #   the release.
-# - Run workflow (Actions tab): builds any commit and keeps the hex as a
-#   downloadable artifact. "commit" takes a SHA (short or full), a branch or a
-#   tag; empty = the branch the run is started from. The commit needs no build
-#   script of its own: the script comes from the branch the run is started from,
-#   and the commit's tree is left untouched, so the firmware reports that commit.
+# - Run workflow (Actions tab): builds the branch picked in "Use workflow
+#   from", or the "commit" input when given (a SHA, short or full, a branch or
+#   a tag), and keeps the hex as a downloadable artifact (GitHub zips it).
+#   GitHub offers Run workflow only once this file is on the default branch.
 #
-# The hex is named betaflight_<version>_<MCU>_<BOARD>_<commit>.hex, the commit
-# being the one `version` on the FC then shows. GitHub delivers an artifact as a
-# zip holding that file.
+# The hex is named droneleaf_<version>_<MCU>_<BOARD>_<commit>.hex, the commit
+# being the one `version` on the FC then shows.
 name: DroneLeaf FC build
 
 on:
@@ -40,23 +42,15 @@ jobs:
       COMMIT: ${{ inputs.commit || github.sha }}
 
     steps:
-      - name: Checkout the build script
-        uses: actions/checkout@v5
-        with:
-          path: devops
-          sparse-checkout: droneleaf
-
       # The whole history, without file contents until checkout, so that any
       # commit (a short SHA too) can be selected below.
-      - name: Checkout the firmware source
+      - name: Checkout
         uses: actions/checkout@v5
         with:
-          path: firmware
           fetch-depth: 0
           filter: tree:0
 
       - name: Select the commit to build
-        working-directory: firmware
         run: |
           sha=$(git rev-parse --verify -q "$COMMIT^{commit}" \
                 || git rev-parse --verify -q "origin/$COMMIT^{commit}") \
@@ -64,23 +58,33 @@ jobs:
           git checkout -q --detach "$sha"
           git log -1 --format='Building %H: %s'
 
+      - name: Prepare board definitions
+        run: |
+          make configs
+          if [ ! -f "src/config/configs/$BOARD/config.h" ]; then
+            echo "::error::unknown board '$BOARD' (not in src/config/configs)"
+            exit 1
+          fi
+
       - name: Cache the ARM toolchain
+        id: toolchain
         uses: actions/cache@v4
         with:
-          path: firmware/tools
-          key: ${{ runner.os }}-arm-sdk-${{ hashFiles('firmware/mk/tools.mk') }}
+          path: tools
+          key: ${{ runner.os }}-arm-sdk-${{ hashFiles('mk/tools.mk') }}
+
+      - name: Install the ARM toolchain
+        if: steps.toolchain.outputs.cache-hit != 'true'
+        run: make arm_sdk_install
 
       - name: Build
-        env:
-          BETAFLIGHT_DIR: ${{ github.workspace }}/firmware
-          REV: 'yes'
-        run: devops/droneleaf/build_fc.sh "$BOARD"
+        run: make "${BOARD}_rev" FORKNAME=droneleaf
 
       - name: Find the hex
         id: hex
         run: |
           shopt -s nullglob
-          hexes=(firmware/obj/betaflight_*_"$BOARD"_*.hex)
+          hexes=(obj/droneleaf_*_"$BOARD"_*.hex)
           if [ ${#hexes[@]} -ne 1 ]; then
             echo "::error::expected one hex for $BOARD, found ${#hexes[@]}: ${hexes[*]}"
             exit 1
@@ -89,7 +93,7 @@ jobs:
           echo "name=$(basename "${hexes[0]}" .hex)" >> "$GITHUB_OUTPUT"
           {
             echo "### $(basename "${hexes[0]}")"
-            echo "Commit \`$(git -C firmware rev-parse HEAD)\`, board \`$BOARD\`."
+            echo "Commit \`$(git rev-parse HEAD)\`, board \`$BOARD\`."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the hex
