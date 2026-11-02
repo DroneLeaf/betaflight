@@ -7,6 +7,9 @@ on:
 jobs:
   ci:
     name: CI
+    # Upstream's release build (every official target). In a fork, releases are
+    # built by droneleaf-fc-build.yml instead.
+    if: github.repository == 'betaflight/betaflight'
     uses: ./.github/workflows/ci.yml
     with:
       release_build: true

@@ -1,0 +1,184 @@
+# DroneLeaf firmware build: one board's .hex (or the SITL executable) from one
+# commit of DroneLeaf/betaflight, built with a plain
+# `make <BOARD>_rev FORKNAME=droneleaf`. Settings are not part of the build:
+# after flashing, apply the airframe's baseline from leaf-racer-db-migration
+# (betaflight/<size>.txt), which pins what a plain build does not default
+# (the MicoAir743 V2's ports).
+#
+# Three ways in:
+# - A release is published in this repository: builds the tagged commit and
+#   attaches the file to the release.
+# - Run workflow (Actions tab): builds the branch picked in "Use workflow
+#   from", or the "commit" input (a SHA, short or full, a branch or a tag), and
+#   keeps the file as a downloadable artifact (GitHub zips it). GitHub offers
+#   Run workflow only once this file is on the default branch.
+# - Called from another repository (software-stack's betaflight_build.yml):
+#   `uses: DroneLeaf/betaflight/.github/workflows/droneleaf-fc-build.yml@<ref>`
+#   with the commit to build, a board and optionally a release tag. Inside a
+#   called workflow the `github` context is the CALLER's, so the source is
+#   checked out by name below, and the file lands in the caller's run (as an
+#   artifact) and on the caller's release.
+#
+# Files: droneleaf_<version>_<MCU>_<BOARD>_<commit>.hex for a board,
+# droneleaf_<version>_SITL_<commit>.elf for SITL (smoke-tested for 8 s). The
+# commit is the one `version` on the FC then shows.
+name: DroneLeaf FC build
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: 'Commit to build: SHA, branch or tag (empty = the branch selected above)'
+        required: false
+        default: ''
+      board:
+        description: 'Board, as named in src/config/configs, or SITL'
+        required: false
+        default: MICOAIR743V2
+  workflow_call:
+    inputs:
+      commit:
+        description: 'Commit of DroneLeaf/betaflight to build: SHA, branch or tag'
+        required: true
+        type: string
+      board:
+        description: 'Board, as named in src/config/configs, or SITL'
+        required: false
+        type: string
+        default: MICOAIR743V2
+      release_tag:
+        description: "Release of the calling repository to attach the file to (empty = artifact only)"
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: write   # attach the file to a release
+
+jobs:
+  build:
+    name: Build ${{ inputs.board || 'MICOAIR743V2' }}
+    runs-on: ubuntu-latest
+    env:
+      BOARD: ${{ inputs.board || 'MICOAIR743V2' }}
+      COMMIT: ${{ inputs.commit || github.sha }}
+      # The caller's release when called, this repository's own when one of its
+      # releases started the run, none for a manual run.
+      RELEASE_TAG: ${{ inputs.release_tag || (github.event_name == 'release' && github.repository == 'DroneLeaf/betaflight' && github.ref_name) || '' }}
+
+    steps:
+      # The whole history without file contents (fetched on checkout), and the
+      # initial checkout limited to .github, so that the commit selected below
+      # is the only tree downloaded and any commit (a short SHA too) resolves.
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          repository: DroneLeaf/betaflight
+          fetch-depth: 0
+          filter: tree:0
+          sparse-checkout: .github
+
+      - name: Select the commit to build
+        run: |
+          sha=$(git rev-parse --verify -q "$COMMIT^{commit}" \
+                || git rev-parse --verify -q "origin/$COMMIT^{commit}") \
+            || { echo "::error::'$COMMIT' is not a commit, branch or tag of DroneLeaf/betaflight"; exit 1; }
+          git checkout -q --detach "$sha"
+          git sparse-checkout disable
+          git log -1 --format='Building %H: %s'
+
+      - name: Prepare board definitions
+        run: |
+          make configs
+          if [ "$BOARD" != SITL ] && [ ! -f "src/config/configs/$BOARD/config.h" ]; then
+            echo "::error::unknown board '$BOARD' (not in src/config/configs, and not SITL)"
+            exit 1
+          fi
+
+      # SITL is built with the runner's own compiler.
+      - name: Cache the ARM toolchain
+        if: env.BOARD != 'SITL'
+        id: toolchain
+        uses: actions/cache@v4
+        with:
+          path: tools
+          key: ${{ runner.os }}-arm-sdk-${{ hashFiles('mk/tools.mk') }}
+
+      - name: Install the ARM toolchain
+        if: env.BOARD != 'SITL' && steps.toolchain.outputs.cache-hit != 'true'
+        run: make arm_sdk_install
+
+      - name: Build
+        run: make "${BOARD}_rev" FORKNAME=droneleaf
+
+      - name: Find the output
+        id: out
+        run: |
+          shopt -s nullglob
+          if [ "$BOARD" = SITL ]; then
+            found=(obj/droneleaf_*_SITL_*)
+          else
+            found=(obj/droneleaf_*_"$BOARD"_*.hex)
+          fi
+          if [ ${#found[@]} -ne 1 ]; then
+            echo "::error::expected one output for $BOARD, found ${#found[@]}: ${found[*]}"
+            exit 1
+          fi
+          file=${found[0]}
+          stem=$(basename "$file" .hex)
+          if [ "$BOARD" = SITL ]; then
+            cp "$file" "$file.elf"
+            file=$file.elf
+          fi
+          {
+            echo "path=$file"
+            echo "name=$(basename "$file")"
+            echo "stem=$stem"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### $(basename "$file")"
+            echo "Commit \`$(git rev-parse HEAD)\` of DroneLeaf/betaflight, board \`$BOARD\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # SITL must still be running when the timeout stops it (exit 124): any
+      # other exit is a crash or an early stop. A crash message such as
+      # "Segmentation fault" comes from the shell, never from SITL's own log.
+      - name: Smoke-test SITL
+        if: env.BOARD == 'SITL'
+        env:
+          SITL_BIN: ${{ steps.out.outputs.path }}
+        run: |
+          bin=$(realpath "$SITL_BIN")
+          mkdir -p sitl-run && cd sitl-run
+          rc=0
+          timeout 8s "$bin" > sitl.log 2>&1 || rc=$?
+          cat sitl.log
+          if [ "$rc" -ne 124 ]; then
+            echo "::error::SITL exited with status $rc before the 8 s timeout"
+            exit 1
+          fi
+          grep -q "SITL" sitl.log || { echo "::error::SITL printed none of its startup lines"; exit 1; }
+
+      - name: Upload SITL log
+        if: env.BOARD == 'SITL' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.out.outputs.stem || 'SITL' }}-log
+          path: sitl-run/sitl.log
+          if-no-files-found: ignore
+
+      - name: Upload the file
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.out.outputs.stem }}
+          path: ${{ steps.out.outputs.path }}
+          if-no-files-found: error
+
+      - name: Attach the file to the release
+        if: env.RELEASE_TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FILE: ${{ steps.out.outputs.path }}
+        run: gh release upload "$RELEASE_TAG" "$FILE" --clobber -R "$GITHUB_REPOSITORY"
