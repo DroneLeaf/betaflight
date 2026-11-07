@@ -28,6 +28,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include <stdio.h>
 #include <stdbool.h>
+#include <string.h>
 
 #include "platform.h"
 
@@ -41,6 +42,7 @@
 #include "drivers/light_led.h"
 #include "drivers/sdcard.h"
 #include "drivers/sdmmc_sdio.h"
+#include "drivers/time.h"
 #include "drivers/usb_msc.h"
 
 #include "pg/pg.h"
@@ -55,6 +57,74 @@
 #endif
 
 #include "usbd_storage.h"
+
+#define MSC_SDIO_BLOCK_SIZE 512
+
+// The USB stack allocates its transfer buffer on the heap, which on H7 lies in DTCM; SDMMC IDMA cannot reach
+// DTCM, so every block goes through this DMA-reachable buffer.
+static uint8_t mscSdioBounceBuffer[MSC_SDIO_BLOCK_SIZE] DMA_RW_AXI __attribute__((aligned(32)));
+
+#define MSC_SDIO_TRANSFER_ATTEMPTS 3
+// SD cards may stay busy programming a written block for a few hundred milliseconds.
+#define MSC_SDIO_TRANSFER_TIMEOUT_MS 500
+
+static bool mscSdioWaitUntil(bool (*done)(void))
+{
+    const timeMs_t start = millis();
+    while (!done()) {
+        if (millis() - start > MSC_SDIO_TRANSFER_TIMEOUT_MS) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool mscSdioReadComplete(void) { return SD_CheckRead() == SD_OK; }
+static bool mscSdioWriteComplete(void) { return SD_CheckWrite() == SD_OK; }
+static bool mscSdioCardInTransferState(void) { return SD_GetState(); }
+
+static bool mscSdioTransferBlockOnce(bool write, uint32_t blockAddress)
+{
+    if (!mscSdioWaitUntil(mscSdioCardInTransferState)) {
+        return false;
+    }
+#if defined(STM32H7)
+    const uint32_t errorsBefore = SD_GetTransferErrorCount();
+#endif
+    SD_Error_t status;
+    if (write) {
+        status = SD_WriteBlocks_DMA(blockAddress, (uint32_t*) mscSdioBounceBuffer, MSC_SDIO_BLOCK_SIZE, 1);
+    } else {
+        status = SD_ReadBlocks_DMA(blockAddress, (uint32_t*) mscSdioBounceBuffer, MSC_SDIO_BLOCK_SIZE, 1);
+    }
+    if (status != SD_OK) {
+        return false;
+    }
+    if (!mscSdioWaitUntil(write ? mscSdioWriteComplete : mscSdioReadComplete)) {
+        return false;
+    }
+#if defined(STM32H7)
+    return SD_GetTransferErrorCount() == errorsBefore;
+#else
+    return true;
+#endif
+}
+
+// A transfer that ends in the driver's error callback still clears its busy flag; without this check the host
+// would get the previous contents of the bounce buffer as if they were the requested block.
+static bool mscSdioTransferBlock(bool write, uint32_t blockAddress)
+{
+    for (int attempt = 0; attempt < MSC_SDIO_TRANSFER_ATTEMPTS; attempt++) {
+        if (mscSdioTransferBlockOnce(write, blockAddress)) {
+            return true;
+        }
+#if defined(STM32H7)
+        // A failed transfer can leave the card waiting for data or a stop command; reset it before retrying.
+        SD_AbortTransfer();
+#endif
+    }
+    return false;
+}
 
 /* Private typedef -----------------------------------------------------------*/
 /* Private define ------------------------------------------------------------*/
@@ -261,14 +331,14 @@ static int8_t STORAGE_Read (uint8_t lun,
     if (!sdcard_isInserted()) {
         return -1;
     }
-    //buf should be 32bit aligned, but usually is so we don't do byte alignment
-    if (SD_ReadBlocks_DMA(blk_addr, (uint32_t*) buf, 512, blk_len) == 0) {
-        while (SD_CheckRead());
-        while(SD_GetState() == false);
-        mscSetActive();
-        return 0;
+    for (uint16_t block = 0; block < blk_len; block++) {
+        if (!mscSdioTransferBlock(false, blk_addr + block)) {
+            return -1;
+        }
+        memcpy(buf + block * MSC_SDIO_BLOCK_SIZE, mscSdioBounceBuffer, MSC_SDIO_BLOCK_SIZE);
     }
-    return -1;
+    mscSetActive();
+    return 0;
 }
 /*******************************************************************************
 * Function Name  : Write_Memory
@@ -286,14 +356,14 @@ static int8_t STORAGE_Write (uint8_t lun,
     if (!sdcard_isInserted()) {
         return -1;
     }
-    //buf should be 32bit aligned, but usually is so we don't do byte alignment
-    if (SD_WriteBlocks_DMA(blk_addr, (uint32_t*) buf, 512, blk_len) == 0) {
-        while (SD_CheckWrite());
-        while(SD_GetState() == false);
-        mscSetActive();
-        return 0;
+    for (uint16_t block = 0; block < blk_len; block++) {
+        memcpy(mscSdioBounceBuffer, buf + block * MSC_SDIO_BLOCK_SIZE, MSC_SDIO_BLOCK_SIZE);
+        if (!mscSdioTransferBlock(true, blk_addr + block)) {
+            return -1;
+        }
     }
-    return -1;
+    mscSetActive();
+    return 0;
 }
 /*******************************************************************************
 * Function Name  : Write_Memory

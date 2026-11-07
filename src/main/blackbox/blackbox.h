@@ -81,6 +81,11 @@ uint16_t blackboxGetPRatio(void);
 uint8_t blackboxCalculateSampleRate(uint16_t pRatio);
 void blackboxValidateConfig(void);
 void blackboxFinish(void);
+#define BLACKBOX_LEAF_SESSION_NAME_MAX 48
+// While a session is active a log is kept open regardless of arming, headed by "H Leaf session:<name>".
+void blackboxLeafSessionStart(const char *name, uint8_t nameLength);
+void blackboxLeafSessionStop(void);
+bool blackboxLeafSessionActive(void);
 bool blackboxMayEditConfig(void);
 #ifdef UNIT_TEST
 STATIC_UNIT_TESTED void blackboxLogIteration(timeUs_t currentTimeUs);

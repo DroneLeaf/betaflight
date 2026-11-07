@@ -299,6 +299,13 @@ static SD_Error_t SD_DoInit(void)
         return SD_ERROR;
     }
 
+    // HAL_SD_Init classes nearly every SDHC card as ultra-high speed and keeps SDIO_CLOCK_DIV (100 MHz), or as high
+    // speed at 50 MHz, without switching the card (CMD6). Without a 1.8 V transceiver those clocks fail read CRC;
+    // the default-speed clock (25 MHz) is valid for every card.
+    if (hsd1.SdCard.CardSpeed != CARD_NORMAL_SPEED) {
+        MODIFY_REG(hsd1.Instance->CLKCR, SDMMC_CLKCR_CLKDIV, SDMMC_NSpeed_CLK_DIV);
+    }
+
     switch(hsd1.SdCard.CardType) {
     case CARD_SDSC:
         switch (hsd1.SdCard.CardVersion) {
@@ -551,6 +558,18 @@ SD_Error_t SD_CheckWrite(void)
 {
     if (SD_Handle.TXCplt != 0) return SD_BUSY;
     return SD_OK;
+}
+
+void SD_AbortTransfer(void)
+{
+    HAL_SD_Abort(&hsd1);
+    SD_Handle.RXCplt = 0;
+    SD_Handle.TXCplt = 0;
+}
+
+uint32_t SD_GetTransferErrorCount(void)
+{
+    return SD_Handle.RXErrors + SD_Handle.TXErrors;
 }
 
 SD_Error_t SD_CheckRead(void)

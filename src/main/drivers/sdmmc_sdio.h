@@ -227,6 +227,12 @@ SD_Error_t       SD_ReadBlocks_DMA           (uint64_t ReadAddress, uint32_t *bu
 SD_Error_t       SD_CheckRead                (void);
 SD_Error_t       SD_WriteBlocks_DMA          (uint64_t WriteAddress, uint32_t *buffer, uint32_t BlockSize, uint32_t NumberOfBlocks);
 SD_Error_t       SD_CheckWrite               (void);
+#if defined(STM32H7)
+// Read and write transfers that ended in an error callback since boot.
+uint32_t         SD_GetTransferErrorCount    (void);
+// Stops the card's current transfer (CMD12) and returns the driver to ready.
+void             SD_AbortTransfer            (void);
+#endif
 
 SD_Error_t       SD_Erase                    (uint64_t StartAddress, uint64_t EndAddress);
 SD_Error_t       SD_GetCardStatus            (SD_CardStatus_t* pCardStatus);

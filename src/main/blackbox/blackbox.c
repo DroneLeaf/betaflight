@@ -1075,6 +1075,10 @@ static void blackboxResetIterationTimers(void)
     blackboxSlowFrameIterationTimer = 0;
 }
 
+static char leafSessionName[BLACKBOX_LEAF_SESSION_NAME_MAX + 1];
+static bool leafSessionIsActive = false;
+static char loggedLeafSessionName[BLACKBOX_LEAF_SESSION_NAME_MAX + 1];
+
 /**
  * Start Blackbox logging if it is not already running. Intended to be called upon arming.
  */
@@ -1115,6 +1119,12 @@ static void blackboxStart(void)
     blackboxLastArmingBeep = getArmingBeepTimeMicros();
     memcpy(&blackboxLastFlightModeFlags, &rcModeActivationMask, sizeof(blackboxLastFlightModeFlags)); // record startup status
 
+    if (leafSessionIsActive) {
+        memcpy(loggedLeafSessionName, leafSessionName, sizeof(loggedLeafSessionName));
+    } else {
+        loggedLeafSessionName[0] = '\0';
+    }
+
     blackboxSetState(BLACKBOX_STATE_PREPARE_LOG_FILE);
 }
 
@@ -1136,6 +1146,38 @@ void blackboxFinish(void)
     default:
         blackboxSetState(BLACKBOX_STATE_SHUTTING_DOWN);
     }
+}
+
+static bool blackboxLogIsOpen(void)
+{
+    return blackboxState > BLACKBOX_STATE_STOPPED && blackboxState <= BLACKBOX_STATE_RUNNING;
+}
+
+void blackboxLeafSessionStart(const char *name, uint8_t nameLength)
+{
+    if (nameLength > BLACKBOX_LEAF_SESSION_NAME_MAX) {
+        nameLength = BLACKBOX_LEAF_SESSION_NAME_MAX;
+    }
+    memcpy(leafSessionName, name, nameLength);
+    leafSessionName[nameLength] = '\0';
+    leafSessionIsActive = true;
+    // An open log belongs to arming or to an earlier session: close it so the next one carries this name.
+    if (blackboxLogIsOpen()) {
+        blackboxFinish();
+    }
+}
+
+void blackboxLeafSessionStop(void)
+{
+    leafSessionIsActive = false;
+    if (blackboxLogIsOpen() && loggedLeafSessionName[0] != '\0') {
+        blackboxFinish();
+    }
+}
+
+bool blackboxLeafSessionActive(void)
+{
+    return leafSessionIsActive;
 }
 
 /**
@@ -1502,6 +1544,7 @@ static bool blackboxWriteSysinfo(void)
 #endif
         BLACKBOX_PRINT_HEADER_LINE("Log start datetime", "%s",              blackboxGetStartDateTime(buf));
         BLACKBOX_PRINT_HEADER_LINE("Craft name", "%s",                      pilotConfig()->craftName);
+        BLACKBOX_PRINT_HEADER_LINE("Leaf session", "%s",                    loggedLeafSessionName);
         BLACKBOX_PRINT_HEADER_LINE("I interval", "%d",                      blackboxIInterval);
         BLACKBOX_PRINT_HEADER_LINE("P interval", "%d",                      blackboxPInterval);
         BLACKBOX_PRINT_HEADER_LINE("P ratio", "%d",                         (uint16_t)(blackboxIInterval / blackboxPInterval));
@@ -2062,7 +2105,7 @@ void blackboxUpdate(timeUs_t currentTimeUs)
 
     switch (blackboxState) {
     case BLACKBOX_STATE_STOPPED:
-        if (ARMING_FLAG(ARMED)) {
+        if (ARMING_FLAG(ARMED) || leafSessionIsActive) {
             blackboxOpen();
             blackboxStart();
         }
