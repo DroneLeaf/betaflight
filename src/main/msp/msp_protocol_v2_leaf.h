@@ -29,3 +29,5 @@
 // DroneLeaf commands (direction '<').
 // in: u8 action (1 = start, 0 = stop), u8 session name length, session name bytes (start only)
 #define MSP2_LEAF_BLACKBOX_SESSION 0x4C10
+// in: u8 cleared (1 = LeafFC grants arming, 0 = LeafFC withholds it); accepted only on the LEAF MSP port
+#define MSP2_LEAF_ARM_CLEARANCE    0x4C11

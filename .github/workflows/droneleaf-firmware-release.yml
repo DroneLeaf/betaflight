@@ -1,0 +1,163 @@
+# Manual prototype release of DroneLeaf firmware from the branch picked in "Run workflow".
+# Build definition (boards, options): droneleaf/build-firmware.sh.
+# Flash the .hex with the Betaflight App: Firmware Flasher -> "Load Firmware [Local]".
+name: DroneLeaf Firmware Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: 'Release notes (what is being tested)'
+        required: false
+        default: ''
+        type: string
+      run_unit_tests:
+        description: 'Run checks and unit tests before releasing'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  setup:
+    name: Setup
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.get-targets.outputs.targets }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Get build targets
+        id: get-targets
+        run: echo "targets=$(./droneleaf/build-firmware.sh targets)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: setup
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(needs.setup.outputs.targets) }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Cache build toolchain
+        uses: actions/cache@v4
+        id: cache-toolchain
+        with:
+          path: tools
+          key: ${{ runner.os }}-${{ hashFiles('mk/tools.mk') }}
+
+      - name: Download and install toolchain
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
+        run: make arm_sdk_install
+
+      - name: Build firmware
+        run: ./droneleaf/build-firmware.sh build ${{ matrix.target }}
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.target }}
+          path: obj/droneleaf_*_${{ matrix.target }}_*.hex
+          if-no-files-found: error
+
+  sitl:
+    name: Build and smoke-test SITL
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Build SITL
+        run: ./droneleaf/build-firmware.sh build SITL
+
+      - name: Smoke-test SITL
+        run: ./droneleaf/build-firmware.sh smoke-sitl "$(ls obj/droneleaf_*_SITL)"
+
+      - name: Package SITL binary
+        run: |
+          set -euo pipefail
+          mkdir -p sitl_out
+          SITL_BIN="$(ls obj/droneleaf_*_SITL)"
+          cp "${SITL_BIN}" "sitl_out/$(basename "${SITL_BIN}").elf"
+
+      - name: Upload SITL binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-SITL
+          path: sitl_out/*.elf
+          if-no-files-found: error
+
+  test:
+    name: Checks and unit tests
+    if: inputs.run_unit_tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Install dependencies
+        run: sudo apt-get install -y libblocksruntime-dev clang-18
+
+      - name: Run sanity checks
+        run: make EXTRA_FLAGS=-Werror checks
+
+      - name: Run all unit tests
+        run: make EXTRA_FLAGS=-Werror test-all
+
+  release:
+    name: Release
+    needs: [build, sitl, test]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.sitl.result == 'success' && (needs.test.result == 'success' || needs.test.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Fetch firmware
+        uses: actions/download-artifact@v5
+        with:
+          pattern: firmware-*
+          path: release_files
+          merge-multiple: true
+
+      - name: Create prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_NOTES_INPUT: ${{ inputs.notes }}
+        run: |
+          set -euo pipefail
+          FC_VERSION="$(make --no-print-directory version)"
+          REVISION="$(git rev-parse --short=9 HEAD)"
+          BRANCH_SLUG="$(echo "${GITHUB_REF_NAME}" | tr -c 'A-Za-z0-9.\n' '-')"
+          TAG="droneleaf-${FC_VERSION}-${BRANCH_SLUG}-${REVISION}-r${GITHUB_RUN_NUMBER}"
+          {
+            echo "Prototype firmware from \`${GITHUB_REF_NAME}\` @ \`${GITHUB_SHA}\`."
+            echo
+            if [ -n "${RELEASE_NOTES_INPUT}" ]; then
+              echo "${RELEASE_NOTES_INPUT}"
+              echo
+            fi
+            echo '```'
+            ./droneleaf/build-firmware.sh release-info
+            echo '```'
+            echo
+            echo 'Flash with the Betaflight App: Firmware Flasher -> "Load Firmware [Local]".'
+          } > release_notes.md
+          cat release_notes.md >> "$GITHUB_STEP_SUMMARY"
+          ls -al release_files
+          gh release create "${TAG}" release_files/* \
+            --prerelease \
+            --target "${GITHUB_SHA}" \
+            --title "${TAG}" \
+            --notes-file release_notes.md

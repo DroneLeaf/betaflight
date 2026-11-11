@@ -53,6 +53,7 @@
 #include "drivers/transponder_ir.h"
 
 #include "fc/controlrate_profile.h"
+#include "fc/leaf_arm_clearance.h"
 #include "fc/rc.h"
 #include "fc/rc_adjustments.h"
 #include "fc/rc_controls.h"
@@ -445,6 +446,15 @@ if (crashFlipModeActive) {
         if (!isMotorProtocolEnabled()) {
             setArmingDisabled(ARMING_DISABLED_MOTOR_PROTOCOL);
         }
+
+#ifdef USE_LEAF_TELEMETRY
+        // Evaluated only while disarmed: a lost LeafFC clearance must never disarm in flight.
+        if (leafArmClearanceDenies()) {
+            setArmingDisabled(ARMING_DISABLED_LEAF_FC);
+        } else {
+            unsetArmingDisabled(ARMING_DISABLED_LEAF_FC);
+        }
+#endif
 
         if (!isUsingSticksForArming()) {
             if (!IS_RC_MODE_ACTIVE(BOXARM)) {

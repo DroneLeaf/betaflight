@@ -25,6 +25,7 @@ PG_SRC = \
             pg/motor.c \
             pg/msp.c \
             pg/leaf_telemetry.c \
+            pg/leaf_arm_clearance.c \
             pg/pg.c \
             pg/pilot.c \
             pg/piniobox.c \
@@ -153,6 +154,7 @@ COMMON_SRC = \
             drivers/serial_softserial.c \
             fc/core.c \
             fc/gps_lap_timer.c \
+            fc/leaf_arm_clearance.c \
             fc/rc.c \
             fc/rc_adjustments.c \
             fc/rc_controls.c \

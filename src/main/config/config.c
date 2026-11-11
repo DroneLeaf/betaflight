@@ -504,6 +504,8 @@ static void validateAndFixConfig(void)
 
     validateAndFixRatesSettings();  // constrain the various rates settings to limits imposed by the rates type
 
+    removeModeActivationCondition(BOXLEAFFC);  // firmware-driven box, never assigned to an aux range
+
 #if defined(USE_RX_MSP_OVERRIDE)
     if (!rxConfig()->msp_override_channels_mask) {
         removeModeActivationCondition(BOXMSPOVERRIDE);
