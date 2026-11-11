@@ -338,14 +338,19 @@ static bool pushGps(timeUs_t currentTimeUs, uint32_t solutionCount, bool heartbe
 }
 #endif // USE_GPS
 
-void taskLeafTelemetry(timeUs_t currentTimeUs)
+serialPortIdentifier_e leafTelemetryResolvePort(void)
 {
-    const serialPortIdentifier_e requested = requestedPushPort();
     serialPortIdentifier_e excluded = SERIAL_PORT_NONE;
 #ifdef USE_MSP_DISPLAYPORT
     excluded = displayPortMspGetSerial();
 #endif
-    pushPort = mspSerialResolvePushPort(requested, excluded);
+    return mspSerialResolvePushPort(requestedPushPort(), excluded);
+}
+
+void taskLeafTelemetry(timeUs_t currentTimeUs)
+{
+    const serialPortIdentifier_e requested = requestedPushPort();
+    pushPort = leafTelemetryResolvePort();
     pushPortFallback = (requested != SERIAL_PORT_ALL) && (pushPort != requested);
 
     if (pushPort != SERIAL_PORT_NONE) {

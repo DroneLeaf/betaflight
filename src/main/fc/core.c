@@ -54,6 +54,7 @@
 #include "drivers/transponder_ir.h"
 
 #include "fc/controlrate_profile.h"
+#include "fc/leaf_arm_clearance.h"
 #include "fc/rc.h"
 #include "fc/rc_adjustments.h"
 #include "fc/rc_controls.h"
@@ -447,6 +448,15 @@ if (crashFlipModeActive) {
             setArmingDisabled(ARMING_DISABLED_MOTOR_PROTOCOL);
         }
 
+#ifdef USE_LEAF_TELEMETRY
+        // Evaluated only while disarmed: a lost LeafFC clearance must never disarm in flight.
+        if (leafArmClearanceDenies()) {
+            setArmingDisabled(ARMING_DISABLED_LEAF_FC);
+        } else {
+            unsetArmingDisabled(ARMING_DISABLED_LEAF_FC);
+        }
+#endif
+
         if (!isUsingSticksForArming()) {
             if (!IS_RC_MODE_ACTIVE(BOXARM)) {
 #ifdef USE_RUNAWAY_TAKEOFF
@@ -517,7 +527,7 @@ void disarm(flightLogDisarmReason_e reason)
         eventData.reason = reason;
         blackboxLogEvent(FLIGHT_LOG_EVENT_DISARM, (flightLogEventData_t*)&eventData);
 
-        if (blackboxConfig()->device && blackboxConfig()->mode != BLACKBOX_MODE_ALWAYS_ON) { // Close the log upon disarm except when logging mode is ALWAYS ON
+        if (blackboxConfig()->device && blackboxConfig()->mode != BLACKBOX_MODE_ALWAYS_ON && !blackboxLeafSessionActive()) { // Close the log upon disarm except when logging mode is ALWAYS ON or a Leaf session holds it open
             blackboxFinish();
         }
 #else

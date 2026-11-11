@@ -114,6 +114,7 @@
 #include "pg/stats.h"
 #include "pg/board.h"
 #include "pg/leaf_telemetry.h"
+#include "pg/leaf_arm_clearance.h"
 
 #include "rx/a7105_flysky.h"
 #include "rx/cc2500_frsky_common.h"
@@ -2051,6 +2052,10 @@ const clivalue_t valueTable[] = {
     { "leaf_baro_msp_rate",      VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = { 0, 1000 }, PG_LEAF_TELEMETRY_CONFIG, offsetof(leafTelemetryConfig_t, baro_rate_hz) },
     { "leaf_gps_msp_rate",       VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = { 0, 1000 }, PG_LEAF_TELEMETRY_CONFIG, offsetof(leafTelemetryConfig_t, gps_rate_hz) },
     { "leaf_messages_msp_port",  VAR_UINT8  | MASTER_VALUE | MODE_LOOKUP, .config.lookup = { TABLE_LEAF_MSP_PORT }, PG_LEAF_TELEMETRY_CONFIG, offsetof(leafTelemetryConfig_t, msp_port) },
+
+// PG_LEAF_ARM_CLEARANCE_CONFIG
+    { "leaf_arm_clearance_required",   VAR_UINT8  | MASTER_VALUE | MODE_LOOKUP, .config.lookup = { TABLE_OFF_ON }, PG_LEAF_ARM_CLEARANCE_CONFIG, offsetof(leafArmClearanceConfig_t, required) },
+    { "leaf_arm_clearance_timeout_ms", VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = { 100, 10000 }, PG_LEAF_ARM_CLEARANCE_CONFIG, offsetof(leafArmClearanceConfig_t, timeout_ms) },
 #endif
 };
 
