@@ -31,6 +31,7 @@
 #include "config/feature.h"
 
 #include "config/config.h"
+#include "fc/leaf_arm_clearance.h"
 #include "fc/runtime_config.h"
 
 #include "flight/mixer.h"
@@ -101,7 +102,9 @@ static const box_t boxes[CHECKBOX_ITEM_COUNT] = {
     { .boxId = BOXBEEPERMUTE, .boxName = "BEEPER MUTE", .permanentId = 52},
     { .boxId = BOXREADY, .boxName = "READY", .permanentId = 53},
     { .boxId = BOXLAPTIMERRESET, .boxName = "LAP TIMER RESET", .permanentId = 54},
-    { .boxId = BOXCHIRP, .boxName = "CHIRP", .permanentId = 55}
+    { .boxId = BOXCHIRP, .boxName = "CHIRP", .permanentId = 55},
+    // DroneLeaf: 200 stays clear of upstream ids, which are allocated sequentially
+    { .boxId = BOXLEAFFC, .boxName = "LEAF FC", .permanentId = 200},
 };
 
 // mask of enabled IDs, calculated on startup based on enabled features. boxId_e is used as bit index
@@ -370,6 +373,10 @@ void initActiveBoxIds(void)
     BME(BOXCHIRP);
 #endif
 
+#ifdef USE_LEAF_TELEMETRY
+    BME(BOXLEAFFC);
+#endif
+
 #undef BME
     // check that all enabled IDs are in boxes array (check may be skipped when using findBoxById() functions)
     for (boxId_e boxId = 0;  boxId < CHECKBOX_ITEM_COUNT; boxId++)
@@ -390,6 +397,10 @@ bool getBoxIdState(boxId_e boxid)
 
     if (boxid == BOXARM) {
         return ARMING_FLAG(ARMED);
+#ifdef USE_LEAF_TELEMETRY
+    } else if (boxid == BOXLEAFFC) {
+        return leafArmClearanceDenies();
+#endif
     } else if (boxid <= BOXID_FLIGHTMODE_LAST) {
         return FLIGHT_MODE(1 << boxIdToFlightModeMap[boxid]);
     } else {

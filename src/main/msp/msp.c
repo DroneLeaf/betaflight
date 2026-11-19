@@ -77,6 +77,7 @@
 #include "fc/controlrate_profile.h"
 #include "fc/core.h"
 #include "fc/dispatch.h"
+#include "fc/leaf_arm_clearance.h"
 #include "fc/rc.h"
 #include "fc/rc_adjustments.h"
 #include "fc/rc_controls.h"
@@ -108,9 +109,11 @@
 
 #include "msp/msp_box.h"
 #include "msp/msp_build_info.h"
+#include "msp/msp_leaf_telemetry.h"
 #include "msp/msp_protocol.h"
 #include "msp/msp_protocol_v2_betaflight.h"
 #include "msp/msp_protocol_v2_common.h"
+#include "msp/msp_protocol_v2_leaf.h"
 #include "msp/msp_serial.h"
 
 #include "osd/osd.h"
@@ -3373,6 +3376,44 @@ static mspResult_e mspProcessInCommand(mspDescriptor_t srcDesc, int16_t cmdMSP, 
             if (sbufBytesRemaining(src) >= 4) {
                 blackboxConfigMutable()->fields_disabled_mask = sbufReadU32(src);
             }
+        }
+        break;
+
+    case MSP2_LEAF_BLACKBOX_SESSION:
+        {
+            if (sbufBytesRemaining(src) < 1) {
+                return MSP_RESULT_ERROR;
+            }
+            const uint8_t action = sbufReadU8(src);
+            if (action == 0) {
+                blackboxLeafSessionStop();
+                break;
+            }
+            if (action != 1 || sbufBytesRemaining(src) < 1) {
+                return MSP_RESULT_ERROR;
+            }
+            const uint8_t nameLength = sbufReadU8(src);
+            if (nameLength == 0 || nameLength > BLACKBOX_LEAF_SESSION_NAME_MAX || sbufBytesRemaining(src) < nameLength) {
+                return MSP_RESULT_ERROR;
+            }
+            char name[BLACKBOX_LEAF_SESSION_NAME_MAX];
+            sbufReadData(src, name, nameLength);
+            blackboxLeafSessionStart(name, nameLength);
+        }
+        break;
+#endif
+
+#ifdef USE_LEAF_TELEMETRY
+    case MSP2_LEAF_ARM_CLEARANCE:
+        {
+            if (srcDesc != getMspSerialPortDescriptor(leafTelemetryResolvePort()) || sbufBytesRemaining(src) < 1) {
+                return MSP_RESULT_ERROR;
+            }
+            const uint8_t cleared = sbufReadU8(src);
+            if (cleared > 1) {
+                return MSP_RESULT_ERROR;
+            }
+            leafArmClearanceReceive(cleared == 1);
         }
         break;
 #endif
