@@ -93,6 +93,13 @@
 #define USE_UART7
 #define USE_UART8
 
+// Four MSP UARTs in the sim: UART1 (TCP 5761, Configurator / health probes),
+// UART2 (5762, LeafFC), UART3 (5763, the pilot OSD), UART4 (5764, SimControl's
+// throttle readout). The default 3 makes validateAndFixSerialConfig reset the
+// WHOLE serial config when a 4th is enabled. A BF TCP UART takes one client,
+// so they cannot share.
+#define MAX_MSP_PORT_COUNT 4
+
 #define DEFAULT_RX_FEATURE      FEATURE_RX_MSP
 #define DEFAULT_FEATURES        (FEATURE_GPS | FEATURE_TELEMETRY)
 
