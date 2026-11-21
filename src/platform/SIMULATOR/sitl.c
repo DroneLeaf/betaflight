@@ -377,13 +377,14 @@ static void *udpRCThread(void *data)
                 printf("[SITL] new rc %d: t:%f AETR: %d %d %d %d AUX1-4: %d %d %d %d\n", n, pkt.timestamp,
                     pkt.channels[0], pkt.channels[1], pkt.channels[2], pkt.channels[3],
                     pkt.channels[4], pkt.channels[5], pkt.channels[6], pkt.channels[7]);
-
+                rc_received = true;
+            }
+            if (rxRuntimeState.rcReadRawFn != readRCSITL) {  // rxInit() resets it to nullReadRawRC: a packet before rxInit would leave RC on fallback forever
                 rxRuntimeState.channelCount = SIMULATOR_MAX_RC_CHANNELS;
                 rxRuntimeState.rcReadRawFn = readRCSITL;
                 rxRuntimeState.rcFrameStatusFn = rxRCFrameStatus;
 
                 rxRuntimeState.rxProvider = RX_PROVIDER_UDP;
-                rc_received = true;
             }
         }
     }
