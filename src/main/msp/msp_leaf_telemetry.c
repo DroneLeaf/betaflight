@@ -39,13 +39,13 @@
 //   u32 s_acc_mms, u16 pdop, u16 ground_speed_cms, u16 ground_course_ddeg, u16 nav_interval_ms,
 //   u8 fix, u8 num_sat, u8 flags (b0 velned valid, b1 heartbeat), u8 reserved
 //
-// LEAF_ALTIMETER 0x4C04 (26 B), once per raw rangefinder frame (oldest first), at most
+// LEAF_ALTIMETER 0x4C04 (26 B), the newest raw rangefinder frame not yet sent, at most
 // leaf_altimeter_msp_rate:
 //   u32 seq, u32 t_fc_us, u32 t_frame_us (FC receive time), u32 frame_count, f32 distance_m,
 //   u16 signal_strength, u16 checksum_errors (wraps), u8 sensor_type (rangefinder_hardware),
 //   u8 flags (b0 valid)
-//   A frame that does not fit stays queued for the next cycle; frame_count reveals frames the
-//   4-entry FIFO dropped.
+//   A frame that does not fit stays pending unless a newer one replaces it; frame_count
+//   reveals the frames that were never sent.
 //
 // LEAF_ESC_MEAS 0x4C05 (24 B), periodic at leaf_esc_meas_msp_rate:
 //   u32 seq, u32 t_fc_us, f32 battery_voltage_v, f32 battery_current_a, f32 avg_motor_rpm,
@@ -488,13 +488,13 @@ void taskLeafTelemetry(timeUs_t currentTimeUs)
         }
 
 #ifdef USE_RANGEFINDER
-        // Event-driven like BARO: one message per raw frame, oldest first, quarter-period tolerance.
+        // Event-driven like BARO: the newest unsent raw frame, quarter-period tolerance.
         if (!linkFull && altimeterStream.periodUs > 0) {
             leafRangefinderFrame_t frame;
             const timeDelta_t sinceLastPushUs = cmpTimeUs(currentTimeUs, lastAltimeterPushUs);
-            if (sinceLastPushUs >= (timeDelta_t)(altimeterStream.periodUs - altimeterStream.periodUs / 4) && leafRangefinderPeekFrame(&frame)) {
+            if (sinceLastPushUs >= (timeDelta_t)(altimeterStream.periodUs - altimeterStream.periodUs / 4) && leafRangefinderPeekUnsentFrame(&frame)) {
                 if (pushAltimeter(currentTimeUs, &frame)) {
-                    leafRangefinderPopFrame();
+                    leafRangefinderMarkFrameSent();
                     lastAltimeterPushUs = currentTimeUs;
                 } else {
                     linkFull = true;
