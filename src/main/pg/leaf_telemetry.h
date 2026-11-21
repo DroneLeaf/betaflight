@@ -47,6 +47,9 @@ typedef struct leafTelemetryConfig_s {
     uint16_t baro_rate_hz;  // LEAF_BARO max push rate (sent once per new sample), 0 = off
     uint16_t gps_rate_hz;   // LEAF_GPS max push rate (sent on a new solution), 0 = off
     uint8_t msp_port;       // leafMspPort_e
+    // Appended without a PG version bump: stored configs keep their values, new fields get defaults.
+    uint16_t altimeter_rate_hz; // LEAF_ALTIMETER max push rate (sent once per rangefinder frame), 0 = off
+    uint16_t esc_meas_rate_hz;  // LEAF_ESC_MEAS push rate, 0 = off
 } leafTelemetryConfig_t;
 
 PG_DECLARE(leafTelemetryConfig_t, leafTelemetryConfig);

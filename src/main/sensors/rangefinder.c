@@ -42,6 +42,7 @@
 #include "drivers/rangefinder/rangefinder_hcsr04.h"
 #include "drivers/rangefinder/rangefinder_lidartf.h"
 #include "drivers/rangefinder/rangefinder_lidarmt.h"
+#include "drivers/rangefinder/rangefinder_nooploop.h"
 #include "drivers/time.h"
 
 #include "fc/runtime_config.h"
@@ -70,6 +71,15 @@ rangefinder_t rangefinder;
 #define RANGEFINDER_DYNAMIC_THRESHOLD           600     //Used to determine max. usable rangefinder disatance
 #define RANGEFINDER_DYNAMIC_FACTOR              75
 
+#define LEAF_RANGEFINDER_FIFO_SIZE              4
+
+uint32_t leafRangefinderFrameCount = 0;
+uint16_t leafRangefinderChecksumErrors = 0;
+
+static leafRangefinderFrame_t leafRangefinderFifo[LEAF_RANGEFINDER_FIFO_SIZE];
+static uint8_t leafRangefinderFifoHead = 0;
+static uint8_t leafRangefinderFifoLength = 0;
+
 PG_REGISTER_WITH_RESET_TEMPLATE(rangefinderConfig_t, rangefinderConfig, PG_RANGEFINDER_CONFIG, 0);
 
 PG_RESET_TEMPLATE(rangefinderConfig_t, rangefinderConfig,
@@ -92,7 +102,7 @@ static bool rangefinderDetect(rangefinderDev_t * dev, uint8_t rangefinderHardwar
 {
     rangefinderType_e rangefinderHardware = RANGEFINDER_NONE;
 
-#if !defined(USE_RANGEFINDER_HCSR04) && !defined(USE_RANGEFINDER_TF)
+#if !defined(USE_RANGEFINDER_HCSR04) && !defined(USE_RANGEFINDER_TF) && !defined(USE_RANGEFINDER_NOOPLOOP)
     UNUSED(dev);
 #endif
 
@@ -118,6 +128,20 @@ static bool rangefinderDetect(rangefinderDev_t * dev, uint8_t rangefinderHardwar
             }
 #endif
             break;
+
+#if defined(USE_RANGEFINDER_NOOPLOOP)
+        case RANGEFINDER_NOOPLOOP_F2:
+        case RANGEFINDER_NOOPLOOP_F2P:
+        case RANGEFINDER_NOOPLOOP_F2PH:
+        case RANGEFINDER_NOOPLOOP_F:
+        case RANGEFINDER_NOOPLOOP_FP:
+        case RANGEFINDER_NOOPLOOP_F2MINI:
+            if (nooploopDetect(dev, rangefinderHardwareToUse)) {
+                rangefinderHardware = rangefinderHardwareToUse;
+                rescheduleTask(TASK_RANGEFINDER, TASK_PERIOD_MS(dev->delayMs));
+            }
+            break;
+#endif
 
 #if defined(USE_RANGEFINDER_MT)
         case RANGEFINDER_MTF01:
@@ -351,6 +375,40 @@ int32_t rangefinderGetLatestRawAltitude(void)
 bool rangefinderIsHealthy(void)
 {
     return (millis() - rangefinder.lastValidResponseTimeMs) < RANGEFINDER_HARDWARE_TIMEOUT_MS;
+}
+
+void leafRangefinderRecordFrame(timeUs_t timeUs, float distanceM, uint16_t signalStrength, bool valid)
+{
+    leafRangefinderFrameCount++;
+
+    if (leafRangefinderFifoLength == LEAF_RANGEFINDER_FIFO_SIZE) {
+        leafRangefinderPopFrame();
+    }
+    leafRangefinderFrame_t *frame = &leafRangefinderFifo[(leafRangefinderFifoHead + leafRangefinderFifoLength) % LEAF_RANGEFINDER_FIFO_SIZE];
+    frame->timeUs = (uint32_t)timeUs;
+    frame->frameCount = leafRangefinderFrameCount;
+    frame->distanceM = distanceM;
+    frame->signalStrength = signalStrength;
+    frame->valid = valid;
+    leafRangefinderFifoLength++;
+}
+
+bool leafRangefinderPeekFrame(leafRangefinderFrame_t *frame)
+{
+    if (leafRangefinderFifoLength == 0) {
+        return false;
+    }
+    *frame = leafRangefinderFifo[leafRangefinderFifoHead];
+    return true;
+}
+
+void leafRangefinderPopFrame(void)
+{
+    if (leafRangefinderFifoLength == 0) {
+        return;
+    }
+    leafRangefinderFifoHead = (leafRangefinderFifoHead + 1) % LEAF_RANGEFINDER_FIFO_SIZE;
+    leafRangefinderFifoLength--;
 }
 #endif
 

@@ -20,7 +20,7 @@
 
 // DroneLeaf pushed telemetry for the companion computer.
 //
-// Three unsolicited MSPv2 native frames are pushed to ONE MSP port
+// Five unsolicited MSPv2 native frames are pushed to ONE MSP port
 // (leaf_messages_msp_port, AUTO = first non-VCP MSP port). All fields are
 // little-endian and packed.
 //
@@ -39,6 +39,19 @@
 //   u32 s_acc_mms, u16 pdop, u16 ground_speed_cms, u16 ground_course_ddeg, u16 nav_interval_ms,
 //   u8 fix, u8 num_sat, u8 flags (b0 velned valid, b1 heartbeat), u8 reserved
 //
+// LEAF_ALTIMETER 0x4C04 (26 B), once per raw rangefinder frame (oldest first), at most
+// leaf_altimeter_msp_rate:
+//   u32 seq, u32 t_fc_us, u32 t_frame_us (FC receive time), u32 frame_count, f32 distance_m,
+//   u16 signal_strength, u16 checksum_errors (wraps), u8 sensor_type (rangefinder_hardware),
+//   u8 flags (b0 valid)
+//   A frame that does not fit stays queued for the next cycle; frame_count reveals frames the
+//   4-entry FIFO dropped.
+//
+// LEAF_ESC_MEAS 0x4C05 (24 B), periodic at leaf_esc_meas_msp_rate:
+//   u32 seq, u32 t_fc_us, f32 battery_voltage_v, f32 battery_current_a, f32 avg_motor_rpm,
+//   u8 rpm_source (0 none, 1 bidirectional DShot, 2 ESC sensor), u8 flags, u16 reserved
+//   flags: b0 voltage valid, b1 current valid, b2 rpm valid
+//
 // A frame that does not fit the target port's TX buffer is dropped and counted; its
 // sequence number is still consumed so the companion sees the gap.
 
@@ -54,6 +67,7 @@
 #include "common/streambuf.h"
 #include "common/utils.h"
 
+#include "drivers/dshot.h"
 #include "drivers/time.h"
 
 #include "fc/runtime_config.h"
@@ -68,12 +82,17 @@
 #include "msp/msp_protocol_v2_leaf.h"
 #include "msp/msp_serial.h"
 
+#include "config/feature.h"
+
 #include "pg/gps.h"
 #include "pg/leaf_telemetry.h"
 
 #include "sensors/acceleration.h"
 #include "sensors/barometer.h"
+#include "sensors/battery.h"
+#include "sensors/esc_sensor.h"
 #include "sensors/gyro.h"
+#include "sensors/rangefinder.h"
 #include "sensors/sensors.h"
 
 #include "msp/msp_leaf_telemetry.h"
@@ -94,6 +113,18 @@
 #define LEAF_GPS_FLAG_VELNED_VALID  (1 << 0)
 #define LEAF_GPS_FLAG_HEARTBEAT     (1 << 1)
 
+#define LEAF_ALTIMETER_FLAG_VALID   (1 << 0)
+
+#define LEAF_ESC_FLAG_VOLTAGE_VALID (1 << 0)
+#define LEAF_ESC_FLAG_CURRENT_VALID (1 << 1)
+#define LEAF_ESC_FLAG_RPM_VALID     (1 << 2)
+
+typedef enum {
+    LEAF_RPM_SOURCE_NONE = 0,
+    LEAF_RPM_SOURCE_DSHOT = 1,
+    LEAF_RPM_SOURCE_ESC_SENSOR = 2,
+} leafRpmSource_e;
+
 typedef struct leafStream_s {
     uint32_t periodUs;      // 0 = stream off
     timeUs_t nextUs;
@@ -104,6 +135,8 @@ typedef struct leafStream_s {
 static leafStream_t imuStream;
 static leafStream_t baroStream;
 static leafStream_t gpsStream;
+static leafStream_t altimeterStream;
+static leafStream_t escMeasStream;
 
 static serialPortIdentifier_e pushPort = SERIAL_PORT_NONE;
 static bool pushPortFallback = false;
@@ -121,6 +154,9 @@ static timeUs_t lastBaroPushUs = 0;
 static uint32_t lastGpsSolutionCount = 0;
 static timeUs_t lastGpsPushUs = 0;
 #endif
+#ifdef USE_RANGEFINDER
+static timeUs_t lastAltimeterPushUs = 0;
+#endif
 
 static uint32_t rateToPeriodUs(uint16_t rateHz)
 {
@@ -135,6 +171,8 @@ void leafTelemetryInit(void)
     imuStream.periodUs = rateToPeriodUs(leafTelemetryConfig()->imu_rate_hz);
     baroStream.periodUs = rateToPeriodUs(leafTelemetryConfig()->baro_rate_hz);
     gpsStream.periodUs = rateToPeriodUs(leafTelemetryConfig()->gps_rate_hz);
+    altimeterStream.periodUs = rateToPeriodUs(leafTelemetryConfig()->altimeter_rate_hz);
+    escMeasStream.periodUs = rateToPeriodUs(leafTelemetryConfig()->esc_meas_rate_hz);
 }
 
 uint16_t leafTelemetryTaskRateHz(void)
@@ -145,6 +183,12 @@ uint16_t leafTelemetryTaskRateHz(void)
     }
     if (leafTelemetryConfig()->gps_rate_hz > rateHz) {
         rateHz = leafTelemetryConfig()->gps_rate_hz;
+    }
+    if (leafTelemetryConfig()->altimeter_rate_hz > rateHz) {
+        rateHz = leafTelemetryConfig()->altimeter_rate_hz;
+    }
+    if (leafTelemetryConfig()->esc_meas_rate_hz > rateHz) {
+        rateHz = leafTelemetryConfig()->esc_meas_rate_hz;
     }
     return rateHz;
 }
@@ -338,6 +382,85 @@ static bool pushGps(timeUs_t currentTimeUs, uint32_t solutionCount, bool heartbe
 }
 #endif // USE_GPS
 
+#ifdef USE_RANGEFINDER
+static bool pushAltimeter(timeUs_t currentTimeUs, const leafRangefinderFrame_t *frame)
+{
+    uint8_t payload[LEAF_ALTIMETER_PAYLOAD_SIZE];
+    sbuf_t buf;
+    sbuf_t *dst = sbufInit(&buf, payload, payload + sizeof(payload));
+
+    uint8_t flags = 0;
+    if (frame->valid) {
+        flags |= LEAF_ALTIMETER_FLAG_VALID;
+    }
+
+    sbufWriteU32(dst, altimeterStream.seq);
+    sbufWriteU32(dst, (uint32_t)currentTimeUs);
+    sbufWriteU32(dst, frame->timeUs);
+    sbufWriteU32(dst, frame->frameCount);
+    writeFloat(dst, frame->distanceM);
+    sbufWriteU16(dst, frame->signalStrength);
+    sbufWriteU16(dst, leafRangefinderChecksumErrors);
+    sbufWriteU8(dst, detectedSensors[SENSOR_INDEX_RANGEFINDER]);
+    sbufWriteU8(dst, flags);
+
+    return leafPush(&altimeterStream, MSP2_LEAF_ALTIMETER, payload, sizeof(payload));
+}
+#endif // USE_RANGEFINDER
+
+static bool pushEscMeas(timeUs_t currentTimeUs)
+{
+    uint8_t payload[LEAF_ESC_MEAS_PAYLOAD_SIZE];
+    sbuf_t buf;
+    sbuf_t *dst = sbufInit(&buf, payload, payload + sizeof(payload));
+
+    uint8_t flags = 0;
+    float batteryVoltageV = 0.0f;
+    float batteryCurrentA = 0.0f;
+    if (isBatteryVoltageConfigured()) {
+        batteryVoltageV = getBatteryVoltage() / 100.0f;
+        flags |= LEAF_ESC_FLAG_VOLTAGE_VALID;
+    }
+    if (isAmperageConfigured()) {
+        batteryCurrentA = getAmperage() / 100.0f;
+        flags |= LEAF_ESC_FLAG_CURRENT_VALID;
+    }
+
+    // Same precedence as MSP_MOTOR_TELEMETRY: bidirectional DShot before the ESC sensor.
+    float avgMotorRpm = 0.0f;
+    uint8_t rpmSource = LEAF_RPM_SOURCE_NONE;
+#ifdef USE_DSHOT_TELEMETRY
+    // getDshotRpmAverage() keeps its last value when telemetry is lost, hence the activity check.
+    if (useDshotTelemetry && isDshotTelemetryActive()) {
+        avgMotorRpm = getDshotRpmAverage();
+        rpmSource = LEAF_RPM_SOURCE_DSHOT;
+    }
+#endif
+#ifdef USE_ESC_SENSOR
+    if (rpmSource == LEAF_RPM_SOURCE_NONE && featureIsEnabled(FEATURE_ESC_SENSOR)) {
+        const escSensorData_t *escData = getEscSensorData(ESC_SENSOR_COMBINED);
+        if (escData && escData->dataAge < ESC_DATA_INVALID) {
+            avgMotorRpm = erpmToRpm(escData->rpm);
+            rpmSource = LEAF_RPM_SOURCE_ESC_SENSOR;
+        }
+    }
+#endif
+    if (rpmSource != LEAF_RPM_SOURCE_NONE) {
+        flags |= LEAF_ESC_FLAG_RPM_VALID;
+    }
+
+    sbufWriteU32(dst, escMeasStream.seq);
+    sbufWriteU32(dst, (uint32_t)currentTimeUs);
+    writeFloat(dst, batteryVoltageV);
+    writeFloat(dst, batteryCurrentA);
+    writeFloat(dst, avgMotorRpm);
+    sbufWriteU8(dst, rpmSource);
+    sbufWriteU8(dst, flags);
+    sbufWriteU16(dst, 0);
+
+    return leafPush(&escMeasStream, MSP2_LEAF_ESC_MEAS, payload, sizeof(payload));
+}
+
 serialPortIdentifier_e leafTelemetryResolvePort(void)
 {
     serialPortIdentifier_e excluded = SERIAL_PORT_NONE;
@@ -354,7 +477,7 @@ void taskLeafTelemetry(timeUs_t currentTimeUs)
     pushPortFallback = (requested != SERIAL_PORT_ALL) && (pushPort != requested);
 
     if (pushPort != SERIAL_PORT_NONE) {
-        // Order IMU -> GPS -> BARO. Once a frame does not fit, the link is saturated:
+        // Order IMU -> ALTIMETER -> GPS -> BARO -> ESC_MEAS. Once a frame does not fit, the link is saturated:
         // skip the remaining streams this cycle (they stay due and go next cycle).
         bool linkFull = false;
 
@@ -363,6 +486,22 @@ void taskLeafTelemetry(timeUs_t currentTimeUs)
                 linkFull = true;
             }
         }
+
+#ifdef USE_RANGEFINDER
+        // Event-driven like BARO: one message per raw frame, oldest first, quarter-period tolerance.
+        if (!linkFull && altimeterStream.periodUs > 0) {
+            leafRangefinderFrame_t frame;
+            const timeDelta_t sinceLastPushUs = cmpTimeUs(currentTimeUs, lastAltimeterPushUs);
+            if (sinceLastPushUs >= (timeDelta_t)(altimeterStream.periodUs - altimeterStream.periodUs / 4) && leafRangefinderPeekFrame(&frame)) {
+                if (pushAltimeter(currentTimeUs, &frame)) {
+                    leafRangefinderPopFrame();
+                    lastAltimeterPushUs = currentTimeUs;
+                } else {
+                    linkFull = true;
+                }
+            }
+        }
+#endif
 
 #ifdef USE_GPS
         if (!linkFull && gpsStream.periodUs > 0) {
@@ -404,6 +543,10 @@ void taskLeafTelemetry(timeUs_t currentTimeUs)
             }
         }
 #endif
+
+        if (!linkFull && streamDue(&escMeasStream, currentTimeUs)) {
+            pushEscMeas(currentTimeUs);
+        }
     }
 
     DEBUG_SET(DEBUG_LEAF_TELEMETRY, 0, imuStream.drops);

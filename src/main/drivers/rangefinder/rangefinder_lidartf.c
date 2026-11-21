@@ -111,6 +111,10 @@ static const lidarTFInfo_t devInfos[] = {
 
 #define TF_DETECTION_CONE_DECIDEGREES 900  // TODO
 
+// TF-Luna rule: strength below 100 or 65535 (saturated) makes the distance unreliable
+#define TF_LEAF_STRENGTH_MIN 100
+#define TF_LEAF_STRENGTH_MAX 65534
+
 static serialPort_t *tfSerialPort = NULL;
 
 typedef enum {
@@ -249,11 +253,16 @@ static void lidarTFUpdate(rangefinderDev_t *dev)
             }
 
             if (c == cksum) {
+                const uint16_t rawDistanceCm = tfFrame[0] | (tfFrame[1] << 8);
+                const uint16_t rawStrength = tfFrame[2] | (tfFrame[3] << 8);
+                const bool rawValid = rawDistanceCm != 0 && rawStrength >= TF_LEAF_STRENGTH_MIN && rawStrength <= TF_LEAF_STRENGTH_MAX;
+                leafRangefinderRecordFrame(micros(), rawDistanceCm / 100.0f, rawStrength, rawValid);
                 lidarTFValue = tfProcessFrame(tfFrame, TF_FRAME_LENGTH);
                 lastFrameReceivedMs = timeNowMs;
             } else {
                 // Checksum error. Simply ignore the current frame.
                 ++lidarTFerrors;
+                leafRangefinderChecksumErrors++;
                 DEBUG_SET(DEBUG_LIDAR_TF, 4, lidarTFerrors);
             }
             tfFrameState = TF_FRAME_STATE_WAIT_START1;
