@@ -32,6 +32,8 @@ PG_RESET_TEMPLATE(leafTelemetryConfig_t, leafTelemetryConfig,
     .baro_rate_hz = 20,     // DPS310 (MICOAIR743) produces a sample every ~50 ms
     .gps_rate_hz = 20,
     .msp_port = LEAF_MSP_PORT_AUTO,
+    .altimeter_rate_hz = 20,
+    .esc_meas_rate_hz = 2,
 );
 
 #endif // USE_LEAF_TELEMETRY

@@ -212,7 +212,8 @@ const char * const lookupTableMagHardware[] = {
 #endif
 #if defined(USE_SENSOR_NAMES) || defined(USE_RANGEFINDER)
 const char * const lookupTableRangefinderHardware[] = {
-    "NONE", "HCSR04", "TFMINI", "TF02", "MTF01", "MTF02", "MTF01P", "MTF02P", "TFNOVA"
+    "NONE", "HCSR04", "TFMINI", "TF02", "MTF01", "MTF02", "MTF01P", "MTF02P", "TFNOVA",
+    "NOOPLOOP_F2", "NOOPLOOP_F2P", "NOOPLOOP_F2PH", "NOOPLOOP_F", "NOOPLOOP_FP", "NOOPLOOP_F2MINI"
 };
 #endif
 #if defined(USE_SENSOR_NAMES) || defined(USE_OPTICALFLOW)
@@ -2051,6 +2052,8 @@ const clivalue_t valueTable[] = {
     { "leaf_imu_msp_rate",       VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = { 0, 1000 }, PG_LEAF_TELEMETRY_CONFIG, offsetof(leafTelemetryConfig_t, imu_rate_hz) },
     { "leaf_baro_msp_rate",      VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = { 0, 1000 }, PG_LEAF_TELEMETRY_CONFIG, offsetof(leafTelemetryConfig_t, baro_rate_hz) },
     { "leaf_gps_msp_rate",       VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = { 0, 1000 }, PG_LEAF_TELEMETRY_CONFIG, offsetof(leafTelemetryConfig_t, gps_rate_hz) },
+    { "leaf_altimeter_msp_rate", VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = { 0, 1000 }, PG_LEAF_TELEMETRY_CONFIG, offsetof(leafTelemetryConfig_t, altimeter_rate_hz) },
+    { "leaf_esc_meas_msp_rate",  VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = { 0, 1000 }, PG_LEAF_TELEMETRY_CONFIG, offsetof(leafTelemetryConfig_t, esc_meas_rate_hz) },
     { "leaf_messages_msp_port",  VAR_UINT8  | MASTER_VALUE | MODE_LOOKUP, .config.lookup = { TABLE_LEAF_MSP_PORT }, PG_LEAF_TELEMETRY_CONFIG, offsetof(leafTelemetryConfig_t, msp_port) },
 
 // PG_LEAF_ARM_CLEARANCE_CONFIG

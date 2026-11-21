@@ -20,7 +20,10 @@
 
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
+
+#include "common/time.h"
 
 #include "drivers/rangefinder/rangefinder.h"
 
@@ -36,6 +39,12 @@ typedef enum {
     RANGEFINDER_MTF01P      = 6,
     RANGEFINDER_MTF02P      = 7,
     RANGEFINDER_TFNOVA      = 8,
+    RANGEFINDER_NOOPLOOP_F2     = 9,
+    RANGEFINDER_NOOPLOOP_F2P    = 10,
+    RANGEFINDER_NOOPLOOP_F2PH   = 11,
+    RANGEFINDER_NOOPLOOP_F      = 12,
+    RANGEFINDER_NOOPLOOP_FP     = 13,
+    RANGEFINDER_NOOPLOOP_F2MINI = 14,
 } rangefinderType_e;
 
 typedef struct rangefinderConfig_s {
@@ -65,3 +74,21 @@ int32_t rangefinderGetLatestRawAltitude(void);
 void rangefinderUpdate(void);
 bool rangefinderProcess(float cosTiltAngle);
 bool rangefinderIsHealthy(void);
+
+// Raw sensor frames for LEAF_ALTIMETER, recorded by the serial drivers on every checksum-valid
+// frame before range clipping, filtering or tilt correction.
+typedef struct leafRangefinderFrame_s {
+    uint32_t timeUs;        // FC receive time
+    uint32_t frameCount;    // leafRangefinderFrameCount including this frame
+    float distanceM;
+    uint16_t signalStrength;
+    bool valid;
+} leafRangefinderFrame_t;
+
+extern uint32_t leafRangefinderFrameCount;
+extern uint16_t leafRangefinderChecksumErrors;     // wraps at 65535
+
+// A full FIFO drops its oldest frame; the frame count exposes the gap.
+void leafRangefinderRecordFrame(timeUs_t timeUs, float distanceM, uint16_t signalStrength, bool valid);
+bool leafRangefinderPeekFrame(leafRangefinderFrame_t *frame);
+void leafRangefinderPopFrame(void);

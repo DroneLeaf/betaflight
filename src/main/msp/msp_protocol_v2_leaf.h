@@ -25,6 +25,8 @@
 #define MSP2_LEAF_IMU   0x4C01  // gyro, acc, attitude point samples
 #define MSP2_LEAF_BARO  0x4C02  // raw pressure/temperature sample with sample timestamp
 #define MSP2_LEAF_GPS   0x4C03  // full GPS solution with solution timestamp
+#define MSP2_LEAF_ALTIMETER 0x4C04  // raw rangefinder frame with FC receive timestamp
+#define MSP2_LEAF_ESC_MEAS  0x4C05  // battery voltage/current and average motor rpm
 
 // DroneLeaf commands (direction '<').
 // in: u8 action (1 = start, 0 = stop), u8 session name length, session name bytes (start only)

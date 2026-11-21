@@ -30,6 +30,8 @@
 #define LEAF_IMU_PAYLOAD_SIZE   40
 #define LEAF_BARO_PAYLOAD_SIZE  24
 #define LEAF_GPS_PAYLOAD_SIZE   62
+#define LEAF_ALTIMETER_PAYLOAD_SIZE 26
+#define LEAF_ESC_MEAS_PAYLOAD_SIZE  24
 
 void leafTelemetryInit(void);
 // Highest configured stream rate in Hz (the task rate), 0 when every stream is off.
