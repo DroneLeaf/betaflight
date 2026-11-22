@@ -88,7 +88,7 @@ typedef struct leafRangefinderFrame_s {
 extern uint32_t leafRangefinderFrameCount;
 extern uint16_t leafRangefinderChecksumErrors;     // wraps at 65535
 
-// A full FIFO drops its oldest frame; the frame count exposes the gap.
+// Only the newest frame is kept; frames replaced before they are sent show as frame count gaps.
 void leafRangefinderRecordFrame(timeUs_t timeUs, float distanceM, uint16_t signalStrength, bool valid);
-bool leafRangefinderPeekFrame(leafRangefinderFrame_t *frame);
-void leafRangefinderPopFrame(void);
+bool leafRangefinderPeekUnsentFrame(leafRangefinderFrame_t *frame);
+void leafRangefinderMarkFrameSent(void);

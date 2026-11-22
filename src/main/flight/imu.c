@@ -111,6 +111,7 @@ quaternion_t offset = QUATERNION_INITIALIZE;
 // absolute angle inclination in multiple of 0.1 degree    180 deg = 1800
 attitudeEulerAngles_t attitude = EULER_INITIALIZE;
 quaternion_t imuAttitudeQuaternion = QUATERNION_INITIALIZE;
+static timeUs_t attitudeUpdateTimeUs = 0;
 
 PG_REGISTER_WITH_RESET_TEMPLATE(imuConfig_t, imuConfig, PG_IMU_CONFIG, 3);
 
@@ -720,6 +721,7 @@ static void imuCalculateEstimatedAttitude(timeUs_t currentTimeUs)
                         imuCalcKpGain(currentTimeUs, useAcc, gyroAverage));
 
     imuUpdateEulerAngles();
+    attitudeUpdateTimeUs = currentTimeUs;
 }
 
 #endif
@@ -794,6 +796,11 @@ void getQuaternion(quaternion_t *quat)
    quat->x = q.x;
    quat->y = q.y;
    quat->z = q.z;
+}
+
+timeUs_t imuGetAttitudeUpdateTimeUs(void)
+{
+    return attitudeUpdateTimeUs;
 }
 
 #ifdef SIMULATOR_BUILD

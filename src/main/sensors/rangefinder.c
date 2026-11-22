@@ -71,14 +71,11 @@ rangefinder_t rangefinder;
 #define RANGEFINDER_DYNAMIC_THRESHOLD           600     //Used to determine max. usable rangefinder disatance
 #define RANGEFINDER_DYNAMIC_FACTOR              75
 
-#define LEAF_RANGEFINDER_FIFO_SIZE              4
-
 uint32_t leafRangefinderFrameCount = 0;
 uint16_t leafRangefinderChecksumErrors = 0;
 
-static leafRangefinderFrame_t leafRangefinderFifo[LEAF_RANGEFINDER_FIFO_SIZE];
-static uint8_t leafRangefinderFifoHead = 0;
-static uint8_t leafRangefinderFifoLength = 0;
+static leafRangefinderFrame_t leafRangefinderLatestFrame;
+static bool leafRangefinderLatestFrameUnsent = false;
 
 PG_REGISTER_WITH_RESET_TEMPLATE(rangefinderConfig_t, rangefinderConfig, PG_RANGEFINDER_CONFIG, 0);
 
@@ -380,35 +377,26 @@ bool rangefinderIsHealthy(void)
 void leafRangefinderRecordFrame(timeUs_t timeUs, float distanceM, uint16_t signalStrength, bool valid)
 {
     leafRangefinderFrameCount++;
-
-    if (leafRangefinderFifoLength == LEAF_RANGEFINDER_FIFO_SIZE) {
-        leafRangefinderPopFrame();
-    }
-    leafRangefinderFrame_t *frame = &leafRangefinderFifo[(leafRangefinderFifoHead + leafRangefinderFifoLength) % LEAF_RANGEFINDER_FIFO_SIZE];
-    frame->timeUs = (uint32_t)timeUs;
-    frame->frameCount = leafRangefinderFrameCount;
-    frame->distanceM = distanceM;
-    frame->signalStrength = signalStrength;
-    frame->valid = valid;
-    leafRangefinderFifoLength++;
+    leafRangefinderLatestFrame.timeUs = (uint32_t)timeUs;
+    leafRangefinderLatestFrame.frameCount = leafRangefinderFrameCount;
+    leafRangefinderLatestFrame.distanceM = distanceM;
+    leafRangefinderLatestFrame.signalStrength = signalStrength;
+    leafRangefinderLatestFrame.valid = valid;
+    leafRangefinderLatestFrameUnsent = true;
 }
 
-bool leafRangefinderPeekFrame(leafRangefinderFrame_t *frame)
+bool leafRangefinderPeekUnsentFrame(leafRangefinderFrame_t *frame)
 {
-    if (leafRangefinderFifoLength == 0) {
+    if (!leafRangefinderLatestFrameUnsent) {
         return false;
     }
-    *frame = leafRangefinderFifo[leafRangefinderFifoHead];
+    *frame = leafRangefinderLatestFrame;
     return true;
 }
 
-void leafRangefinderPopFrame(void)
+void leafRangefinderMarkFrameSent(void)
 {
-    if (leafRangefinderFifoLength == 0) {
-        return;
-    }
-    leafRangefinderFifoHead = (leafRangefinderFifoHead + 1) % LEAF_RANGEFINDER_FIFO_SIZE;
-    leafRangefinderFifoLength--;
+    leafRangefinderLatestFrameUnsent = false;
 }
 #endif
 

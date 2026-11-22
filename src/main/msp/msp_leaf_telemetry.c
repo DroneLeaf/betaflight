@@ -24,10 +24,13 @@
 // (leaf_messages_msp_port, AUTO = first non-VCP MSP port). All fields are
 // little-endian and packed.
 //
-// LEAF_IMU 0x4C01 (40 B), periodic at leaf_imu_msp_rate:
+// LEAF_IMU 0x4C01 (48 B), periodic at leaf_imu_msp_rate:
 //   u32 seq, u32 t_fc_us, f32 gyro_dps[3] (gyroADCf), f32 acc_mps2[3] (post-LPF accADC),
-//   i16 att_ddeg[3] (attitude.raw roll, pitch, yaw), u8 flags, u8 reserved
+//   i16 att_ddeg[3] (attitude.raw roll, pitch, yaw), u8 flags, u8 reserved,
+//   i16 att_quat[4] (w, x, y, z of the body-to-earth attitude quaternion, scaled by 32767,
+//   propagated with gyroADCf from the last attitude update to t_fc_us)
 //   flags: b0 acc clipped since last push, b1 gyro calibrated, b2 acc calibrated, b3 armed
+//   The first 40 bytes keep the layout of the 40-byte frame of earlier firmware.
 //
 // LEAF_BARO 0x4C02 (24 B), on each new sample, at most leaf_baro_msp_rate:
 //   u32 seq, u32 t_fc_us, u32 t_baro_us, u32 baro_sample_count, i32 pressure_pa,
@@ -39,13 +42,13 @@
 //   u32 s_acc_mms, u16 pdop, u16 ground_speed_cms, u16 ground_course_ddeg, u16 nav_interval_ms,
 //   u8 fix, u8 num_sat, u8 flags (b0 velned valid, b1 heartbeat), u8 reserved
 //
-// LEAF_ALTIMETER 0x4C04 (26 B), once per raw rangefinder frame (oldest first), at most
+// LEAF_ALTIMETER 0x4C04 (26 B), the newest raw rangefinder frame not yet sent, at most
 // leaf_altimeter_msp_rate:
 //   u32 seq, u32 t_fc_us, u32 t_frame_us (FC receive time), u32 frame_count, f32 distance_m,
 //   u16 signal_strength, u16 checksum_errors (wraps), u8 sensor_type (rangefinder_hardware),
 //   u8 flags (b0 valid)
-//   A frame that does not fit stays queued for the next cycle; frame_count reveals frames the
-//   4-entry FIFO dropped.
+//   A frame that does not fit stays pending unless a newer one replaces it; frame_count
+//   reveals the frames that were never sent.
 //
 // LEAF_ESC_MEAS 0x4C05 (24 B), periodic at leaf_esc_meas_msp_rate:
 //   u32 seq, u32 t_fc_us, f32 battery_voltage_v, f32 battery_current_a, f32 avg_motor_rpm,
@@ -64,6 +67,7 @@
 
 #include "build/debug.h"
 
+#include "common/maths.h"
 #include "common/streambuf.h"
 #include "common/utils.h"
 
@@ -101,6 +105,9 @@
 #define LEAF_MSP_V2_OVERHEAD        9
 #define LEAF_GPS_HEARTBEAT_US       1000000
 #define LEAF_GRAVITY_MSS            9.80665f
+#define LEAF_QUATERNION_SCALE       32767.0f
+// Longer gaps mean the attitude task has stalled; the frame then carries the last estimate.
+#define LEAF_ATTITUDE_PROPAGATION_MAX_US 20000
 
 #define LEAF_IMU_FLAG_ACC_CLIPPED   (1 << 0)
 #define LEAF_IMU_FLAG_GYRO_CAL      (1 << 1)
@@ -173,6 +180,14 @@ void leafTelemetryInit(void)
     gpsStream.periodUs = rateToPeriodUs(leafTelemetryConfig()->gps_rate_hz);
     altimeterStream.periodUs = rateToPeriodUs(leafTelemetryConfig()->altimeter_rate_hz);
     escMeasStream.periodUs = rateToPeriodUs(leafTelemetryConfig()->esc_meas_rate_hz);
+}
+
+uint16_t leafTelemetryAttitudeTaskRateHz(uint16_t minimumRateHz)
+{
+    if (leafTelemetryConfig()->imu_rate_hz > minimumRateHz) {
+        return leafTelemetryConfig()->imu_rate_hz;
+    }
+    return minimumRateHz;
 }
 
 uint16_t leafTelemetryTaskRateHz(void)
@@ -248,6 +263,34 @@ static void writeFloat(sbuf_t *dst, float value)
     sbufWriteData(dst, &value, sizeof(value));
 }
 
+static void attitudeAtTime(timeUs_t currentTimeUs, quaternion_t *out)
+{
+    getQuaternion(out);
+    const timeDelta_t sinceUpdateUs = cmpTimeUs(currentTimeUs, imuGetAttitudeUpdateTimeUs());
+    if (sinceUpdateUs <= 0 || sinceUpdateUs > LEAF_ATTITUDE_PROPAGATION_MAX_US) {
+        return;
+    }
+    const float halfDt = 0.5f * sinceUpdateUs * 1e-6f;
+    const float gx = DEGREES_TO_RADIANS(gyro.gyroADCf[X]) * halfDt;
+    const float gy = DEGREES_TO_RADIANS(gyro.gyroADCf[Y]) * halfDt;
+    const float gz = DEGREES_TO_RADIANS(gyro.gyroADCf[Z]) * halfDt;
+    const quaternion_t q0 = *out;
+    out->w = q0.w - q0.x * gx - q0.y * gy - q0.z * gz;
+    out->x = q0.x + q0.w * gx + q0.y * gz - q0.z * gy;
+    out->y = q0.y + q0.w * gy - q0.x * gz + q0.z * gx;
+    out->z = q0.z + q0.w * gz + q0.x * gy - q0.y * gx;
+    const float recipNorm = invSqrt(sq(out->w) + sq(out->x) + sq(out->y) + sq(out->z));
+    out->w *= recipNorm;
+    out->x *= recipNorm;
+    out->y *= recipNorm;
+    out->z *= recipNorm;
+}
+
+static int16_t quaternionComponentToInt16(float component)
+{
+    return (int16_t)lrintf(constrainf(component, -1.0f, 1.0f) * LEAF_QUATERNION_SCALE);
+}
+
 static bool pushImu(timeUs_t currentTimeUs)
 {
     uint8_t payload[LEAF_IMU_PAYLOAD_SIZE];
@@ -288,6 +331,11 @@ static bool pushImu(timeUs_t currentTimeUs)
     }
     sbufWriteU8(dst, flags);
     sbufWriteU8(dst, 0);
+    quaternion_t attitudeAtPush;
+    attitudeAtTime(currentTimeUs, &attitudeAtPush);
+    for (int i = 0; i < 4; i++) {
+        sbufWriteU16(dst, (uint16_t)quaternionComponentToInt16(attitudeAtPush.v[i]));
+    }
 
     const bool sent = leafPush(&imuStream, MSP2_LEAF_IMU, payload, sizeof(payload));
 #ifdef USE_ACC
@@ -488,13 +536,13 @@ void taskLeafTelemetry(timeUs_t currentTimeUs)
         }
 
 #ifdef USE_RANGEFINDER
-        // Event-driven like BARO: one message per raw frame, oldest first, quarter-period tolerance.
+        // Event-driven like BARO: the newest unsent raw frame, quarter-period tolerance.
         if (!linkFull && altimeterStream.periodUs > 0) {
             leafRangefinderFrame_t frame;
             const timeDelta_t sinceLastPushUs = cmpTimeUs(currentTimeUs, lastAltimeterPushUs);
-            if (sinceLastPushUs >= (timeDelta_t)(altimeterStream.periodUs - altimeterStream.periodUs / 4) && leafRangefinderPeekFrame(&frame)) {
+            if (sinceLastPushUs >= (timeDelta_t)(altimeterStream.periodUs - altimeterStream.periodUs / 4) && leafRangefinderPeekUnsentFrame(&frame)) {
                 if (pushAltimeter(currentTimeUs, &frame)) {
-                    leafRangefinderPopFrame();
+                    leafRangefinderMarkFrameSent();
                     lastAltimeterPushUs = currentTimeUs;
                 } else {
                     linkFull = true;
