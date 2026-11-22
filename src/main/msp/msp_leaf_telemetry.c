@@ -58,6 +58,7 @@
 // A frame that does not fit the target port's TX buffer is dropped and counted; its
 // sequence number is still consumed so the companion sees the gap.
 
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -279,7 +280,7 @@ static void attitudeAtTime(timeUs_t currentTimeUs, quaternion_t *out)
     out->x = q0.x + q0.w * gx + q0.y * gz - q0.z * gy;
     out->y = q0.y + q0.w * gy - q0.x * gz + q0.z * gx;
     out->z = q0.z + q0.w * gz + q0.x * gy - q0.y * gx;
-    const float recipNorm = invSqrt(sq(out->w) + sq(out->x) + sq(out->y) + sq(out->z));
+    const float recipNorm = 1.0f / sqrtf(sq(out->w) + sq(out->x) + sq(out->y) + sq(out->z));
     out->w *= recipNorm;
     out->x *= recipNorm;
     out->y *= recipNorm;
