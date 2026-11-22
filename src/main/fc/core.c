@@ -86,6 +86,9 @@
 #include "io/vtx_rtc6705.h"
 
 #include "msp/msp_serial.h"
+#ifdef USE_LEAF_TELEMETRY
+#include "msp/msp_leaf_telemetry.h"
+#endif
 
 #include "osd/osd.h"
 
@@ -1125,7 +1128,11 @@ void processRxModes(timeUs_t currentTimeUs)
         rescheduleTask(TASK_ATTITUDE, TASK_PERIOD_HZ(acc.sampleRateHz / (float)imuConfig()->imu_process_denom));
     } else {
         LED1_OFF;
+#ifdef USE_LEAF_TELEMETRY
+        rescheduleTask(TASK_ATTITUDE, TASK_PERIOD_HZ(leafTelemetryAttitudeTaskRateHz(100)));
+#else
         rescheduleTask(TASK_ATTITUDE, TASK_PERIOD_HZ(100));
+#endif
     }
 
     if (!IS_RC_MODE_ACTIVE(BOXPREARM) && ARMING_FLAG(WAS_ARMED_WITH_PREARM)) {

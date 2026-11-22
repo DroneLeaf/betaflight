@@ -27,7 +27,7 @@
 #include "io/serial.h"
 
 // Payload sizes of the pushed LEAF_* frames (see msp_leaf_telemetry.c for layouts).
-#define LEAF_IMU_PAYLOAD_SIZE   40
+#define LEAF_IMU_PAYLOAD_SIZE   48
 #define LEAF_BARO_PAYLOAD_SIZE  24
 #define LEAF_GPS_PAYLOAD_SIZE   62
 #define LEAF_ALTIMETER_PAYLOAD_SIZE 26
@@ -36,6 +36,8 @@
 void leafTelemetryInit(void);
 // Highest configured stream rate in Hz (the task rate), 0 when every stream is off.
 uint16_t leafTelemetryTaskRateHz(void);
+// Attitude task rate that keeps the LEAF_IMU quaternion at least as fresh as the frame rate.
+uint16_t leafTelemetryAttitudeTaskRateHz(uint16_t minimumRateHz);
 void taskLeafTelemetry(timeUs_t currentTimeUs);
 // The serial port carrying LEAF_* frames and LeafFC commands, SERIAL_PORT_NONE if none.
 serialPortIdentifier_e leafTelemetryResolvePort(void);
