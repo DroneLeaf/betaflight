@@ -158,11 +158,6 @@ STATIC_UNIT_TESTED void imuComputeRotationMatrix(void)
     rMat.m[2][0] = 2.0f * (qP.xz + -qP.wy);
     rMat.m[2][1] = 2.0f * (qP.yz - -qP.wx);
     rMat.m[2][2] = 1.0f - 2.0f * qP.xx - 2.0f * qP.yy;
-
-#if defined(SIMULATOR_BUILD) && !defined(USE_IMU_CALC) && !defined(SET_IMU_FROM_EULER)
-    rMat.m[1][0] = -2.0f * (qP.xy - -qP.wz);
-    rMat.m[2][0] = -2.0f * (qP.xz + -qP.wy);
-#endif
 }
 
 static float calculateThrottleAngleScale(uint16_t throttle_correction_angle)
