@@ -252,7 +252,8 @@ static void updateState(const fdm_packet* pkt)
     zf = atan2(t3, t4) * RAD2DEG;
     imuSetAttitudeRPY(xf, -yf, zf); // yes! pitch was inverted!!
 #else
-    imuSetAttitudeQuat(pkt->imu_orientation_quat[0], pkt->imu_orientation_quat[1], pkt->imu_orientation_quat[2], pkt->imu_orientation_quat[3]);
+    // FDM quaternion is FRD/NED; Betaflight's body/earth frames are FLU/NWU (as the gyro mapping above).
+    imuSetAttitudeQuat(pkt->imu_orientation_quat[0], pkt->imu_orientation_quat[1], -pkt->imu_orientation_quat[2], -pkt->imu_orientation_quat[3]);
 #endif
 #endif
 
